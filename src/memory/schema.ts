@@ -1,0 +1,106 @@
+/**
+ * Memory Schema Definitions
+ * 
+ * Defines the core data structures for the memory storage layer.
+ */
+
+/**
+ * Source type for memory entries
+ */
+export type MemorySourceType = 'session' | 'file' | 'web' | 'boomerang' | 'project';
+
+/**
+ * Memory entry stored in the database
+ */
+export interface MemoryEntry {
+  /** UUID primary key */
+  id: string;
+  /** Content text */
+  text: string;
+  /** BGE-large embedding vector (1024-dim) */
+  vector: Float32Array;
+  /** Source type indicating where the memory came from */
+  sourceType: MemorySourceType;
+  /** Optional source URL/path */
+  sourcePath?: string;
+  /** Entry creation timestamp */
+  timestamp: Date;
+  /** SHA-256 hash of content for deduplication */
+  contentHash: string;
+  /** JSON-serialized metadata */
+  metadataJson?: string;
+  /** Optional session ID for session-scoped memories */
+  sessionId?: string;
+}
+
+/**
+ * Input for creating a new memory entry (without auto-generated fields)
+ */
+export type MemoryEntryInput = Omit<MemoryEntry, 'id' | 'timestamp' | 'contentHash'>;
+
+/**
+ * Search strategy for querying memories
+ */
+export type SearchStrategy = 'TIERED' | 'VECTOR_ONLY' | 'TEXT_ONLY';
+
+/**
+ * Options for searching memories
+ */
+export interface SearchOptions {
+  /** Number of results to return (default: 5, max: 20) */
+  topK?: number;
+  /** Search strategy to use (default: 'TIERED') */
+  strategy?: SearchStrategy;
+  /** Confidence threshold for TIERED strategy fallback (default: 0.72) */
+  threshold?: number;
+  /** Optional filters */
+  filter?: SearchFilter;
+}
+
+/**
+ * Filter criteria for memory search
+ */
+export interface SearchFilter {
+  /** Filter by source type */
+  sourceType?: MemorySourceType;
+  /** Filter by session ID */
+  sessionId?: string;
+  /** Filter by minimum timestamp */
+  since?: Date;
+}
+
+/**
+ * LanceDB table name
+ */
+export const MEMORY_TABLE_NAME = 'memories';
+
+/**
+ * HNSW index configuration for fast vector search
+ */
+export const HNSW_CONFIG = {
+  type: 'hnsw',
+  m: 16,                    // Max connections per layer
+  efConstruction: 128,      // Build-time search depth
+  efSearch: 64,            // Query-time search depth
+  distanceType: 'cosine',  // Cosine similarity
+} as const;
+
+/**
+ * Default search options
+ */
+export const DEFAULT_SEARCH_OPTIONS: Required<SearchOptions> = {
+  topK: 5,
+  strategy: 'TIERED',
+  threshold: 0.72,
+  filter: {},
+} as const;
+
+/**
+ * Content hashing result for deduplication
+ */
+export interface ContentHash {
+  /** SHA-256 hash in hex format */
+  hash: string;
+  /** Original text that was hashed */
+  text: string;
+}

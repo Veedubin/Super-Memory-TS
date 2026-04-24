@@ -1,0 +1,85 @@
+/**
+ * Super-Memory MCP Server
+ * 
+ * Main entry point for the MCP server that provides local-first
+ * memory capabilities with embeddings and vector search.
+ * 
+ * Usage:
+ *   npx tsx src/index.ts
+ *   node dist/index.js
+ */
+
+import { SuperMemoryServer } from './server.js';
+import { logger } from './utils/logger.js';
+
+let server: SuperMemoryServer | null = null;
+let isShuttingDown = false;
+
+/**
+ * Create and start the MCP server
+ */
+async function main(): Promise<void> {
+  try {
+    server = new SuperMemoryServer();
+    await server.start();
+  } catch (error) {
+    logger.error('Failed to start server', error);
+    // Give the server a chance to log its initialization error
+    await new Promise(resolve => setTimeout(resolve, 100));
+    process.exit(1);
+  }
+}
+
+/**
+ * Graceful shutdown handler
+ */
+function setupShutdownHandlers(): void {
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGQUIT'];
+
+  for (const signal of signals) {
+    process.on(signal, async () => {
+      if (isShuttingDown) {
+        logger.warn('Shutdown already in progress, forcing exit');
+        process.exit(1);
+      }
+      isShuttingDown = true;
+      logger.info(`Received ${signal}, initiating graceful shutdown...`);
+      try {
+        if (server) {
+          await server.shutdown();
+        }
+        process.exit(0);
+      } catch (error) {
+        logger.error('Error during shutdown', error);
+        process.exit(1);
+      }
+    });
+  }
+
+  // Handle uncaught exceptions - log before exit
+  process.on('uncaughtException', (error) => {
+    logger.error('Uncaught exception', error);
+    // Give logger time to flush
+    setTimeout(() => process.exit(1), 100);
+  });
+
+  // Handle unhandled promise rejections - log before exit
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled rejection', { reason, promise });
+    // Give logger time to flush
+    setTimeout(() => process.exit(1), 100);
+  });
+}
+
+// Start the server
+setupShutdownHandlers();
+main().catch((error) => {
+  logger.error('Unhandled error in main', error);
+  process.exit(1);
+});
+
+export { SuperMemoryServer } from './server.js';
+export { loadConfig, validateConfig } from './config.js';
+export * from './utils/errors.js';
+export * from './utils/logger.js';
+export * from './utils/hash.js';
