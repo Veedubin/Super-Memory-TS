@@ -105,3 +105,17 @@ export interface ContentHash {
   /** Original text that was hashed */
   text: string;
 }
+
+/**
+ * Persistent tracking info for indexed files
+ */
+export interface IndexedFile {
+  /** Full path to the file */
+  filePath: string;
+  /** SHA-256 content hash */
+  contentHash: string;
+  /** ISO timestamp of last indexing */
+  lastIndexed: string;
+  /** Number of chunks the file was split into */
+  chunkCount: number;
+}

@@ -11,12 +11,13 @@
 import { readFile, stat } from 'fs/promises';
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
-import { extname, sep } from 'path';
+import { extname, sep, resolve } from 'path';
 import { logger } from '../utils/logger.js';
 import { ProjectWatcher, createWatcher } from './watcher.js';
 import { FileChunker, createChunker } from './chunker.js';
 import { generateEmbeddings } from '../model/embeddings.js';
 import { MemoryDatabase, getDatabase, type MemoryEntryInput } from '../memory/database.js';
+import { FileTracker } from './file-tracker.js';
 import type {
   ProjectIndexConfig,
   ProjectChunk,
@@ -67,7 +68,7 @@ export class ProjectIndexer extends EventEmitter {
   private watcher: ProjectWatcher | null = null;
   private chunker: FileChunker;
   private db: MemoryDatabase;
-  private indexedFiles: Map<string, { hash: string; lastModified: Date; chunkCount: number }> = new Map();
+  private fileTracker: FileTracker;
   private isRunning: boolean = false;
   private processingPromises: Map<string, Promise<void>> = new Map();
   private pendingEventCount: number = 0;
@@ -83,7 +84,7 @@ export class ProjectIndexer extends EventEmitter {
   // Flush interval in ms
   private static readonly FLUSH_INTERVAL_MS = 100;
 
-  constructor(config: ProjectIndexConfig, db?: MemoryDatabase) {
+  constructor(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string) {
     super();
     
     // Merge config with defaults
@@ -110,6 +111,9 @@ export class ProjectIndexer extends EventEmitter {
       minChunkSize: 50,
       splitBy: 'semantic',
     });
+
+    // Initialize persistent file tracker
+    this.fileTracker = new FileTracker(resolve(dbUri || './memory_data', '../file_tracker.db'));
   }
 
   /**
@@ -165,7 +169,8 @@ export class ProjectIndexer extends EventEmitter {
       // Wait for initial file processing to complete before signaling ready
       await this.waitForProcessingComplete();
       logger.info('Initial indexing complete');
-      logger.info(`Final stats before emit: indexedFiles=${this.indexedFiles.size}, totalChunks=${Array.from(this.indexedFiles.values()).reduce((sum, f) => sum + f.chunkCount, 0)}`);
+      const allFiles = this.fileTracker.getAllFiles();
+      logger.info(`Final stats before emit: indexedFiles=${allFiles.size}, totalChunks=${Array.from(allFiles.values()).reduce((sum, f) => sum + f.chunkCount, 0)}`);
       this.emit('stats', this.getStats());
     });
     
@@ -195,7 +200,7 @@ export class ProjectIndexer extends EventEmitter {
       }, 30000);
     });
     
-    logger.debug(`start() returning. indexedFiles=${this.indexedFiles.size}`);
+    logger.debug(`start() returning. indexedFiles=${this.fileTracker.getAllFiles().size}`);
   }
 
   /**
@@ -345,7 +350,7 @@ export class ProjectIndexer extends EventEmitter {
       const hash = this.computeHash(content);
       
       // Check if file has changed
-      const existing = this.indexedFiles.get(filePath);
+      const existing = this.fileTracker.getFile(filePath);
       if (existing?.hash === hash) {
         logger.debug(`File unchanged, skipping: ${filePath}`);
         return;
@@ -389,11 +394,7 @@ export class ProjectIndexer extends EventEmitter {
       this.scheduleFlush();
 
       // Update tracking
-      this.indexedFiles.set(filePath, {
-        hash,
-        lastModified: new Date(),
-        chunkCount: chunks.length,
-      });
+      this.fileTracker.setFile(filePath, hash, chunks.length);
 
       logger.info(`Queued for indexing: ${filePath} (${chunks.length} chunks)`);
     } catch (error) {
@@ -411,7 +412,7 @@ export class ProjectIndexer extends EventEmitter {
   async removeFile(filePath: string): Promise<void> {
     try {
       await this.deleteChunksForFile(filePath);
-      this.indexedFiles.delete(filePath);
+      this.fileTracker.removeFile(filePath);
       logger.info(`Removed from index: ${filePath}`);
     } catch (error) {
       const errorDetails = error instanceof Error
@@ -587,12 +588,13 @@ export class ProjectIndexer extends EventEmitter {
    * Get indexer statistics
    */
   getStats(): ProjectIndexerStats {
+    const allFiles = this.fileTracker.getAllFiles();
     return {
-      totalFiles: this.indexedFiles.size,
-      totalChunks: Array.from(this.indexedFiles.values()).reduce(
+      totalFiles: allFiles.size,
+      totalChunks: Array.from(allFiles.values()).reduce(
         (sum, f) => sum + f.chunkCount, 0
       ),
-      indexedFiles: this.indexedFiles.size,
+      indexedFiles: allFiles.size,
       failedFiles: 0, // Would need to track this
       lastIndexing: new Date(),
     };
@@ -609,7 +611,11 @@ export class ProjectIndexer extends EventEmitter {
    * Clear the index - removes all indexed files from tracking
    */
   clearIndex(): void {
-    this.indexedFiles.clear();
+    // Clear in-memory map by removing all files from tracker
+    const allFiles = this.fileTracker.getAllFiles();
+    for (const filePath of allFiles.keys()) {
+      this.fileTracker.removeFile(filePath);
+    }
     logger.info('Index cleared');
   }
 
@@ -618,7 +624,11 @@ export class ProjectIndexer extends EventEmitter {
    */
   async restart(): Promise<void> {
     await this.stop();
-    this.indexedFiles.clear();
+    // Clear tracker
+    const allFiles = this.fileTracker.getAllFiles();
+    for (const filePath of allFiles.keys()) {
+      this.fileTracker.removeFile(filePath);
+    }
     await this.start();
   }
 }
@@ -626,6 +636,6 @@ export class ProjectIndexer extends EventEmitter {
 /**
  * Create a new project indexer
  */
-export function createIndexer(config: ProjectIndexConfig, db?: MemoryDatabase): ProjectIndexer {
-  return new ProjectIndexer(config, db);
+export function createIndexer(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string): ProjectIndexer {
+  return new ProjectIndexer(config, db, dbUri);
 }
