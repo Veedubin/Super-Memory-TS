@@ -380,7 +380,7 @@ export class MemoryDatabase {
 
     const results = await memoryTable
       .query()
-      .where(`contentHash = '${hash}'`)
+      .where(`"contentHash" = '${hash}'`)
       .limit(1)
       .toArray();
 
