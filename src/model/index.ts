@@ -33,7 +33,6 @@ export class ModelManager {
   private config: ModelConfig;
   private extractor: Pipeline | null = null;
   private refCount: number = 0;
-  private isLoading: boolean = false;
   private loadingPromise: Promise<Pipeline | null> | null = null;
 
   private constructor(config: ModelConfig) {
@@ -78,7 +77,7 @@ export class ModelManager {
     if (this.loadingPromise) return this.loadingPromise as Promise<Pipeline>;
 
     this.loadingPromise = this.loadModelWithRetry();
-    return this.loadingPromise;
+    return this.loadingPromise as Promise<Pipeline>;
   }
 
   /**
@@ -139,7 +138,6 @@ export class ModelManager {
    */
   private async loadModel(): Promise<void> {
     if (this.extractor) return;
-    this.isLoading = true;
 
     this.loadingPromise = (async () => {
       const modelId = this.selectModel();
@@ -186,7 +184,6 @@ export class ModelManager {
         throw new Error(errorMsg);
       }
 
-      this.isLoading = false;
       return this.extractor;
     })();
 
@@ -201,7 +198,6 @@ export class ModelManager {
       this.extractor = null;
     }
     this.refCount = 0;
-    this.isLoading = false;
     this.loadingPromise = null;
 
     // Suggest garbage collection for VRAM cleanup (Node.js specific)
