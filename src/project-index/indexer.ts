@@ -31,6 +31,11 @@ import type {
 const SKIP_EXTENSIONS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.sqlite', '.sqlite3']);
 const SKIP_DIRS = new Set(['lancedb', 'node_modules', '.git', 'dist', 'build', '.cache', '__pycache__']);
 
+// Memory management constants
+const MAX_FILE_SIZE_MB = 5; // Skip files larger than 5MB
+const MAX_BUFFER_SIZE = 50; // Max chunks in memory before forced flush
+const MEMORY_THRESHOLD = 0.85; // Force flush if heap usage exceeds 85%
+
 /**
  * Check if a file should be skipped based on extension or directory
  */
@@ -335,8 +340,23 @@ export class ProjectIndexer extends EventEmitter {
 
     logger.debug(`processFile called: ${filePath}`);
     try {
-      // Check file size
+      // Check file size BEFORE reading (prevent OOM)
       const stats = await stat(filePath);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      if (fileSizeMB > MAX_FILE_SIZE_MB) {
+        logger.warn(`File too large (${fileSizeMB.toFixed(1)}MB), skipping: ${filePath}`);
+        return;
+      }
+
+      // Check memory pressure before processing
+      const memUsage = process.memoryUsage();
+      const heapUsageRatio = memUsage.heapUsed / memUsage.heapTotal;
+      if (heapUsageRatio > MEMORY_THRESHOLD) {
+        logger.warn(`Memory pressure high (${(heapUsageRatio * 100).toFixed(0)}%), forcing buffer flush`);
+        await this.flushPendingChunks();
+      }
+
+      // Check file size
       if (stats.size > this.config.maxFileSize) {
         logger.warn(`File too large, skipping: ${filePath} (${stats.size} bytes)`);
         return;
@@ -382,6 +402,12 @@ export class ProjectIndexer extends EventEmitter {
         };
 
         // Queue chunk to buffer (embedding will be generated during flush)
+        // Check buffer size limit to prevent OOM
+        if (this.pendingChunks.length >= MAX_BUFFER_SIZE) {
+          logger.debug(`Buffer full (${MAX_BUFFER_SIZE}), forcing flush before adding more chunks`);
+          await this.flushPendingChunks();
+        }
+
         this.pendingChunks.push({
           text: chunk.content,
           sourceType: 'project',

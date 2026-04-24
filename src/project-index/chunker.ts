@@ -38,6 +38,9 @@ const CODE_EXTENSIONS = new Set([
   '.xml', '.html', '.css', '.scss', '.sass', '.less',
 ]);
 
+// Large file threshold (1MB) - JSON files larger than this are risky
+const LARGE_FILE_THRESHOLD = 1024 * 1024;
+
 // Boundary patterns for code files
 const BOUNDARY_PATTERNS: Array<{ pattern: RegExp; type: string }> = [
   // TypeScript/JavaScript
@@ -94,6 +97,15 @@ export class FileChunker {
    * Chunk a file's content
    */
   chunkFile(content: string, filePath: string): Chunk[] {
+    const ext = this.getExtension(filePath).toLowerCase();
+    
+    // For large JSON files, return empty chunks to prevent OOM
+    // Large JSON files (especially array-based) are not suitable for text chunking
+    if ((ext === '.json' || ext === '.jsonc') && content.length > LARGE_FILE_THRESHOLD) {
+      logger.warn(`Large JSON file (${(content.length / 1024 / 1024).toFixed(1)}MB), skipping chunking: ${filePath}`);
+      return [];
+    }
+
     const lines = content.split('\n');
     
     // Check if this is a code file
