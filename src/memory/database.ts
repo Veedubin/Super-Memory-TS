@@ -354,7 +354,9 @@ export class MemoryDatabase {
       // Ensure vector is a regular array for LanceDB compatibility
       const vectorArray = Array.isArray(input.vector)
         ? input.vector
-        : Array.from(input.vector);
+        : input.vector
+        ? Array.from(input.vector)
+        : [];
 
       const entry = {
         id,
