@@ -3,7 +3,12 @@
  * Manages embedding model lifecycle with reference counting
  */
 
-import { pipeline, Pipeline } from '@xenova/transformers';
+import os from 'os';
+import path from 'path';
+import { env, pipeline, Pipeline } from '@xenova/transformers';
+
+// Set cache directory to user-writable location to avoid permission issues in global installs
+env.cacheDir = path.join(os.homedir(), '.cache', 'transformers');
 import {
   ModelConfig,
   ComputeDevice,

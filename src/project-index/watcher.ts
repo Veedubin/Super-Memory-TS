@@ -25,6 +25,16 @@ const ALWAYS_EXCLUDED = [
   '**/.cache/**',
   '**/coverage/**',
   '**/*.log',
+  '**/.DS_Store',
+  '**/.bash_history',
+  '**/.Xauthority',
+  '**/.ICEauthority',
+  '**/.viminfo',
+  // Socket files
+  '**/.socket',
+  '**/*.sock',
+  // Skip files starting with . and common system files
+  '**/.*',
 ];
 
 /**
@@ -87,6 +97,10 @@ export class ProjectWatcher extends EventEmitter {
     // Create watcher with polling for better fs event detection in tests
     this.watcher = chokidar.watch(watchTargets, {
       ignored: (path: string) => {
+        // Skip paths that are likely sockets or special files
+        if (this.isSpecialFile(path)) {
+          return true;
+        }
         // Use the isPathExcluded check directly for proper filtering
         // This ensures we detect files at all directory levels
         return this.isPathExcluded(path);
@@ -99,6 +113,10 @@ export class ProjectWatcher extends EventEmitter {
       awaitWriteFinish: {
         stabilityThreshold: 300,
       },
+      // Ignore permission errors on special files like sockets
+      ignorePermissionErrors: true,
+      // Disable atomic writes optimization for safety
+      atomic: false,
     });
     
     // Set up handlers AFTER watcher is created
@@ -135,6 +153,33 @@ export class ProjectWatcher extends EventEmitter {
         return true;
       }
     }
+    return false;
+  }
+
+  /**
+   * Check if a path is a special file (socket, FIFO, etc.) that shouldn't be watched
+   */
+  private isSpecialFile(path: string): boolean {
+    const normalizedPath = path.replace(/\\/g, '/');
+    const basename = normalizedPath.split('/').pop() || '';
+
+    // Skip common special files and patterns
+    if (basename.startsWith('.')) {
+      // Hidden files (except known safe ones like .gitignore)
+      const safeHiddenFiles = ['.gitignore', '.gitattributes', '.editorconfig', '.eslintrc', '.prettierrc'];
+      if (!safeHiddenFiles.includes(basename)) {
+        return true;
+      }
+    }
+
+    // Skip socket files and pipes
+    if (normalizedPath.includes('.socket') ||
+        normalizedPath.endsWith('.sock') ||
+        normalizedPath.includes('/.X11-unix/') ||
+        normalizedPath.includes('/.ICE-unix/')) {
+      return true;
+    }
+
     return false;
   }
 
