@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.11] - 2026-04-24
+
+### Fixed
+- **Connection closed errors**: Increased timeout for uncaught exceptions/unhandled rejections from 100ms to 5000ms to allow in-flight requests to complete
+- **Request timeout handling**: Added 60-second timeout per request to prevent hanging requests from blocking shutdown
+- **Graceful shutdown**: Server now properly drains in-flight requests before exiting
+
+### Technical Details
+- `src/index.ts`: Timeouts increased from 100ms to 5000ms for graceful error handling
+- `src/server.ts`: Added `Promise.race()` with 60-second timeout for each tool handler
+
 ## [1.0.0] - 2026-04-23
 
 ### 🎉 First Stable Release

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * Super-Memory MCP Server
- * 
+ *
  * Main entry point for the MCP server that provides local-first
  * memory capabilities with embeddings and vector search.
- * 
+ *
  * Usage:
  *   npx tsx src/index.ts
  *   node dist/index.js
@@ -63,18 +63,18 @@ function setupShutdownHandlers(): void {
     });
   }
 
-  // Handle uncaught exceptions - log before exit
+  // Handle uncaught exceptions - log before exit with graceful shutdown
   process.on('uncaughtException', (error) => {
     logger.error('Uncaught exception', error);
-    // Give logger time to flush
-    setTimeout(() => process.exit(1), 100);
+    // Give logger and in-flight requests time to complete before exit
+    setTimeout(() => process.exit(1), 5000);
   });
 
-  // Handle unhandled promise rejections - log before exit
+  // Handle unhandled promise rejections - log before exit with graceful shutdown
   process.on('unhandledRejection', (reason, promise) => {
     logger.error('Unhandled rejection', { reason, promise });
-    // Give logger time to flush
-    setTimeout(() => process.exit(1), 100);
+    // Give logger and in-flight requests time to complete before exit
+    setTimeout(() => process.exit(1), 5000);
   });
 }
 

@@ -170,6 +170,16 @@ function mapSourceType(input: string): MemorySourceType {
   return mapping[input] || 'session';
 }
 
+/**
+ * Apply timeout to a promise, returning the result or throwing a timeout error
+ */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new MemoryError('Request timeout', 'REQUEST_TIMEOUT')), ms);
+  });
+  return Promise.race([promise, timeoutPromise]);
+}
+
 // ==================== SuperMemoryServer ====================
 
 export class SuperMemoryServer {
@@ -236,7 +246,7 @@ export class SuperMemoryServer {
       return { tools: TOOLS };
     });
 
-    // Handle tool calls
+    // Handle tool calls with timeout
     this.server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
       const { name, arguments: args } = request.params;
 
@@ -246,16 +256,31 @@ export class SuperMemoryServer {
         return this.formatError(new MemoryError('Not connected to transport', 'NOT_CONNECTED'));
       }
 
+      // Apply timeout to prevent requests from hanging indefinitely
+      const requestTimeout = 60000; // 60 seconds
+
       try {
         switch (name) {
           case 'query_memories':
-            return await this.handleQueryMemories(args as unknown as QueryMemoriesArgs);
+            return await withTimeout(
+              this.handleQueryMemories(args as unknown as QueryMemoriesArgs),
+              requestTimeout
+            );
           case 'add_memory':
-            return await this.handleAddMemory(args as unknown as AddMemoryArgs);
+            return await withTimeout(
+              this.handleAddMemory(args as unknown as AddMemoryArgs),
+              requestTimeout
+            );
           case 'search_project':
-            return await this.handleSearchProject(args as unknown as SearchProjectArgs);
+            return await withTimeout(
+              this.handleSearchProject(args as unknown as SearchProjectArgs),
+              requestTimeout
+            );
           case 'index_project':
-            return await this.handleIndexProject(args as unknown as IndexProjectArgs);
+            return await withTimeout(
+              this.handleIndexProject(args as unknown as IndexProjectArgs),
+              requestTimeout
+            );
           default:
             throw new MemoryError(`Unknown tool: ${name}`, 'UNKNOWN_TOOL');
         }
