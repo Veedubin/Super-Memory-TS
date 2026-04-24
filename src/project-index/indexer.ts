@@ -15,7 +15,7 @@ import { logger } from '../utils/logger.js';
 import { ProjectWatcher, createWatcher } from './watcher.js';
 import { FileChunker, createChunker } from './chunker.js';
 import { generateEmbeddings } from '../model/embeddings.js';
-import { MemoryDatabase } from '../memory/database.js';
+import { MemoryDatabase, getDatabase } from '../memory/database.js';
 import type {
   ProjectIndexConfig,
   ProjectChunk,
@@ -74,8 +74,9 @@ export class ProjectIndexer extends EventEmitter {
       chunkOverlap: config.chunkOverlap || DEFAULT_CONFIG.chunkOverlap,
     };
     
-    // Use provided database or create new instance (not singleton)
-    this.db = db || new MemoryDatabase();
+    // Use provided database, or shared singleton from getDatabase()
+    // This ensures indexer shares the same database instance as MemorySystem
+    this.db = db || getDatabase();
     this.chunker = createChunker({
       maxChunkSize: this.config.chunkSize,
       overlap: this.config.chunkOverlap,
@@ -96,9 +97,9 @@ export class ProjectIndexer extends EventEmitter {
     logger.info('Starting project indexer');
     this.isRunning = true;
 
-    // Ensure database is initialized
+    // Ensure database is initialized (use shared singleton)
     if (!this.db) {
-      this.db = new MemoryDatabase();
+      this.db = getDatabase();
     }
     await this.db.initialize().catch(err => {
       logger.error('Failed to initialize database', { error: err.message });

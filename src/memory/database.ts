@@ -33,6 +33,11 @@ const tables: Map<string, Table> = new Map();
 const indexCreated: Map<string, boolean> = new Map();
 
 /**
+ * Reference count for connections (prevents premature close)
+ */
+const connectionRefCount: Map<string, number> = new Map();
+
+/**
  * Model metadata table name
  */
 const MODEL_METADATA_TABLE = 'model_metadata';
@@ -82,6 +87,10 @@ export class MemoryDatabase {
 
     const db = await connect(this.uri);
     connections.set(this.uri, db);
+
+    // Initialize reference count for this URI
+    const currentCount = connectionRefCount.get(this.uri) || 0;
+    connectionRefCount.set(this.uri, currentCount + 1);
 
     // Create table if it doesn't exist (empty table is fine - index will be created later)
     const tableNames = await db.tableNames();
@@ -412,15 +421,30 @@ export class MemoryDatabase {
 
   /**
    * Close the database connection
+   * Only actually closes when reference count reaches 0
    */
   async close(): Promise<void> {
-    const db = connections.get(this.uri);
-    if (db) {
-      await db.close();
-      connections.delete(this.uri);
-      tables.delete(this.uri);
-      indexCreated.delete(this.uri);
+    const currentCount = connectionRefCount.get(this.uri) || 0;
+
+    if (currentCount <= 1) {
+      // Last reference - actually close
+      const db = connections.get(this.uri);
+      if (db) {
+        try {
+          await db.close();
+        } catch (err) {
+          console.warn('Error closing database connection:', err);
+        }
+        connections.delete(this.uri);
+        tables.delete(this.uri);
+        indexCreated.delete(this.uri);
+        connectionRefCount.delete(this.uri);
+      }
+    } else {
+      // Decrement reference count
+      connectionRefCount.set(this.uri, currentCount - 1);
     }
+
     this.initialized = false;
   }
 

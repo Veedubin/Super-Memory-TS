@@ -46,6 +46,9 @@ import type { MemoryEntry, MemoryEntryInput, SearchOptions } from './schema.js';
 export class MemorySystem {
   private db: MemoryDatabase;
   private search: MemorySearch;
+  private initialized: boolean = false;
+  private initializing: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(db?: MemoryDatabase, search?: MemorySearch) {
     this.db = db ?? new MemoryDatabase();
@@ -55,12 +58,37 @@ export class MemorySystem {
   /**
    * Initialize the memory system
    * Must be called before any memory operations
+   * Prevents multiple simultaneous initialization calls
    */
   async initialize(dbUri?: string): Promise<void> {
-    // Always reinitialize to ensure we have a fresh database connection
-    // This handles the case where MemorySystem was created before initialization
+    // If already initializing, wait for that to complete
+    if (this.initializing && this.initPromise) {
+      return this.initPromise;
+    }
+
+    // If already initialized with same URI, return immediately
+    if (this.initialized && this.db) {
+      return;
+    }
+
+    this.initializing = true;
+    this.initPromise = this._doInitialize(dbUri);
+
+    try {
+      await this.initPromise;
+      this.initialized = true;
+    } finally {
+      this.initializing = false;
+      this.initPromise = null;
+    }
+  }
+
+  /**
+   * Internal initialization logic
+   */
+  private async _doInitialize(dbUri?: string): Promise<void> {
+    // If dbUri provided and different from current, create new database
     if (dbUri) {
-      // Create new database instance with the specific URI
       this.db = new MemoryDatabase(dbUri);
     }
     await this.db.initialize();
@@ -68,6 +96,13 @@ export class MemorySystem {
     // Create new search with the database instance
     this.search = new MemorySearch(this.db);
     await this.search.refreshIndex();
+  }
+
+  /**
+   * Check if the memory system is initialized
+   */
+  isInitialized(): boolean {
+    return this.initialized;
   }
 
   /**
@@ -173,4 +208,13 @@ export function getMemorySystem(): MemorySystem {
     defaultMemorySystem = new MemorySystem();
   }
   return defaultMemorySystem;
+}
+
+/**
+ * Reset the default memory system instance (for testing or recovery)
+ */
+export function resetMemorySystem(): void {
+  if (defaultMemorySystem) {
+    defaultMemorySystem = null;
+  }
 }

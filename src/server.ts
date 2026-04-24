@@ -181,6 +181,7 @@ export class SuperMemoryServer {
   private config: ReturnType<typeof loadConfigSync>;
   private initialized: boolean = false;
   private initError: Error | null = null;
+  private transportConnected: boolean = false;
 
   constructor() {
     this.config = loadConfigSync();
@@ -239,6 +240,12 @@ export class SuperMemoryServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
       const { name, arguments: args } = request.params;
 
+      // Check connection state before processing
+      if (!this.transportConnected) {
+        logger.error('Received request but transport not connected');
+        return this.formatError(new MemoryError('Not connected to transport', 'NOT_CONNECTED'));
+      }
+
       try {
         switch (name) {
           case 'query_memories':
@@ -253,6 +260,11 @@ export class SuperMemoryServer {
             throw new MemoryError(`Unknown tool: ${name}`, 'UNKNOWN_TOOL');
         }
       } catch (error) {
+        // Check for "Not connected" errors and attempt recovery
+        if (error instanceof MemoryError && error.message.includes('Not connected')) {
+          logger.warn('Not connected error detected, checking transport state...');
+          // Don't retry immediately, just report the error
+        }
         return this.formatError(error);
       }
     });
@@ -590,6 +602,11 @@ export class SuperMemoryServer {
       // Connect to transport
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
+      this.transportConnected = true;
+
+      // Store reference to transport for potential close detection
+      // Note: StdioServerTransport doesn't expose an on() method for close events
+      // We rely on the server's close handling instead
 
       this.initialized = true;
       logger.info('Super-Memory MCP Server started successfully');
