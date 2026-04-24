@@ -590,11 +590,14 @@ export class SuperMemoryServer {
         throw new Error(`Memory system initialization failed: ${this.initError.message}`);
       }
 
-      // Initialize model via ModelManager singleton
+      // Initialize model via ModelManager singleton (non-blocking)
+      // Model loads lazily on first request to prevent connection timeout
       try {
         const modelManager = ModelManager.getInstance();
-        await modelManager.acquire();
-        logger.info('Model manager initialized');
+        modelManager.acquire().catch(err => {
+          logger.warn('Model loading failed, will retry on first request:', err.message);
+        });
+        logger.info('Model manager initialized (lazy loading)');
       } catch (modelError) {
         logger.warn('Model manager initialization failed - embeddings unavailable', modelError);
         // Continue without model - some features may not work

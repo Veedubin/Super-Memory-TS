@@ -70,14 +70,37 @@ export class ModelManager {
   /**
    * Acquire model (increment reference count).
    * Loads model if not already loaded.
+   * Lazy loading with retry - doesn't block caller.
    */
-  async acquire(): Promise<void> {
+  async acquire(): Promise<Pipeline> {
     this.refCount++;
-    if (!this.extractor && !this.isLoading) {
-      await this.loadModel();
-    } else if (this.isLoading && this.loadingPromise) {
-      await this.loadingPromise;
+    if (this.extractor) return this.extractor;
+    if (this.loadingPromise) return this.loadingPromise as Promise<Pipeline>;
+
+    this.loadingPromise = this.loadModelWithRetry();
+    return this.loadingPromise;
+  }
+
+  /**
+   * Load model with retry mechanism for transient failures
+   */
+  private async loadModelWithRetry(retries = 3): Promise<Pipeline> {
+    let lastError: Error | null = null;
+
+    for (let i = 0; i < retries; i++) {
+      try {
+        await this.loadModel();
+        if (this.extractor) return this.extractor;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`Model load attempt ${i + 1} failed, retrying...`, lastError.message);
+        if (i < retries - 1) {
+          await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+        }
+      }
     }
+
+    throw new Error(`Failed to load model after ${retries} retries: ${lastError?.message}`);
   }
 
   /**
