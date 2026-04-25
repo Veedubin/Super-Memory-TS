@@ -238,7 +238,7 @@ export class MemoryDatabase {
     const timestamp = Date.now();
     const contentHash = computeHash(input.text);
 
-    const vector = input.vector
+    const vector = input.vector?.length
       ? Array.isArray(input.vector) ? input.vector : Array.from(input.vector)
       : (await generateEmbeddings([input.text]))[0].embedding;
 
