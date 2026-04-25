@@ -257,7 +257,7 @@ export class SuperMemoryServer {
       }
 
       // Apply timeout to prevent requests from hanging indefinitely
-      const requestTimeout = 60000; // 60 seconds
+      const requestTimeout = 180000; // 180 seconds (3 minutes)
 
       // High-priority tools that should pause indexing during execution
       const highPriorityTools = ['query_memories', 'add_memory', 'search_project'];
@@ -598,17 +598,14 @@ export class SuperMemoryServer {
         throw new Error(`Memory system initialization failed: ${this.initError.message}`);
       }
 
-      // Initialize model via ModelManager singleton (non-blocking)
-      // Model loads lazily on first request to prevent connection timeout
+      // Initialize model via ModelManager singleton (preload model)
+      // Model loads eagerly at startup to prevent timeouts on first request
       try {
         const modelManager = ModelManager.getInstance();
-        modelManager.acquire().catch(err => {
-          logger.warn('Model loading failed, will retry on first request:', err.message);
-        });
-        logger.info('Model manager initialized (lazy loading)');
+        await modelManager.acquire();
+        logger.info('Model manager initialized (model preloaded)');
       } catch (modelError) {
-        logger.warn('Model manager initialization failed - embeddings unavailable', modelError);
-        // Continue without model - some features may not work
+        logger.warn('Model manager initialization failed - embeddings will be generated on first request', modelError);
       }
 
       // Initialize project indexer (non-critical)

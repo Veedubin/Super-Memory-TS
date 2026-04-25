@@ -58,6 +58,7 @@ export interface PerformanceConfig {
   pauseIndexingDuringRequests: boolean;
   periodicScanIntervalMs: number;
   yieldMs: number;
+  requestTimeoutMs: number; // default: 180000
 }
 
 // ==================== Constants ====================
@@ -79,6 +80,7 @@ const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = {
   pauseIndexingDuringRequests: true,
   periodicScanIntervalMs: 300000, // 5 minutes
   yieldMs: 10,
+  requestTimeoutMs: 180000, // 3 minutes
 };
 
 const DEFAULT_CONFIG: Config = {
@@ -295,6 +297,7 @@ function parseEnvConfig(): Partial<Config> {
       pauseIndexingDuringRequests: parseBoolean(process.env[ENV_VARS.BOOMERANG_PAUSE_INDEXING], DEFAULT_CONFIG.performance.pauseIndexingDuringRequests),
       periodicScanIntervalMs: parseInt(process.env[ENV_VARS.BOOMERANG_PERIODIC_SCAN_INTERVAL_MS] || '', 10) || DEFAULT_CONFIG.performance.periodicScanIntervalMs,
       yieldMs: parseInt(process.env[ENV_VARS.BOOMERANG_YIELD_MS] || '', 10) || DEFAULT_CONFIG.performance.yieldMs,
+      requestTimeoutMs: DEFAULT_CONFIG.performance.requestTimeoutMs,
     },
   };
 }
@@ -336,6 +339,7 @@ async function loadJsonConfig(configPath: string): Promise<Partial<Config>> {
         pauseIndexingDuringRequests: json.performance.pauseIndexingDuringRequests ?? DEFAULT_CONFIG.performance.pauseIndexingDuringRequests,
         periodicScanIntervalMs: json.performance.periodicScanIntervalMs ?? DEFAULT_CONFIG.performance.periodicScanIntervalMs,
         yieldMs: json.performance.yieldMs ?? DEFAULT_CONFIG.performance.yieldMs,
+        requestTimeoutMs: json.performance.requestTimeoutMs ?? DEFAULT_CONFIG.performance.requestTimeoutMs,
       } : undefined,
     };
   } catch {
