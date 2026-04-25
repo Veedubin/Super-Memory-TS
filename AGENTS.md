@@ -95,6 +95,19 @@ docker run -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
 export QDRANT_URL=http://localhost:6333  # default
 ```
 
+### MCP Server Config for Boomerang
+
+```json
+{
+  "super-memory-ts": {
+    "type": "local",
+    "command": ["npx", "-y", "@veedubin/super-memory-ts"],
+    "environment": { "QDRANT_URL": "http://localhost:6333" },
+    "enabled": true
+  }
+}
+```
+
 ---
 
 ## Review Notes

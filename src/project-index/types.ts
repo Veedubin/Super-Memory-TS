@@ -31,6 +31,11 @@ export interface ProjectIndexConfig {
   flushThreshold?: number;
   memoryThreshold?: number;
   maxBufferBytes?: number;
+  // Priority-based indexing (optional)
+  indexingPriority?: 'low' | 'normal' | 'high';
+  pauseIndexingDuringRequests?: boolean;
+  periodicScanIntervalMs?: number;
+  yieldMs?: number;
 }
 
 export interface ProjectIndexConfigInternal {
@@ -45,6 +50,10 @@ export interface ProjectIndexConfigInternal {
   flushThreshold: number;
   memoryThreshold: number;
   maxBufferBytes: number;
+  indexingPriority: 'low' | 'normal' | 'high';
+  pauseIndexingDuringRequests: boolean;
+  periodicScanIntervalMs: number;
+  yieldMs: number;
 }
 
 // ==================== File Events ====================

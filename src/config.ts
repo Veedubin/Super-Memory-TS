@@ -55,6 +55,9 @@ export interface PerformanceConfig {
   memoryThreshold: number;
   maxBufferBytes: number;
   indexOnStartup: boolean;
+  pauseIndexingDuringRequests: boolean;
+  periodicScanIntervalMs: number;
+  yieldMs: number;
 }
 
 // ==================== Constants ====================
@@ -73,6 +76,9 @@ const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = {
   memoryThreshold: 0.70,
   maxBufferBytes: 50 * 1024 * 1024, // 50MB
   indexOnStartup: true,
+  pauseIndexingDuringRequests: true,
+  periodicScanIntervalMs: 300000, // 5 minutes
+  yieldMs: 10,
 };
 
 const DEFAULT_CONFIG: Config = {
@@ -157,12 +163,28 @@ function validatePerformanceConfig(config: PerformanceConfig): PerformanceValida
     config.maxBufferBytes = clamp(config.maxBufferBytes, minBuffer, maxBuffer);
   }
   
+  if (config.pauseIndexingDuringRequests !== undefined && typeof config.pauseIndexingDuringRequests !== 'boolean') {
+    warnings.push(`pauseIndexingDuringRequests must be a boolean`);
+    config.pauseIndexingDuringRequests = true;
+  }
+  
+  if (config.periodicScanIntervalMs < 60000 || config.periodicScanIntervalMs > 3600000) {
+    warnings.push(`periodicScanIntervalMs must be between 60000 and 3600000, clamping to valid range`);
+    config.periodicScanIntervalMs = clamp(config.periodicScanIntervalMs, 60000, 3600000);
+  }
+  
+  if (config.yieldMs < 0 || config.yieldMs > 100) {
+    warnings.push(`yieldMs must be between 0 and 100, clamping to valid range`);
+    config.yieldMs = clamp(config.yieldMs, 0, 100);
+  }
+  
   return { valid: true, warnings };
 }
 
 // ==================== Environment Variable Names ====================
 
 export const ENV_VARS = {
+  QDRANT_URL: 'QDRANT_URL',
   BOOMERANG_PRECISION: 'BOOMERANG_PRECISION',
   BOOMERANG_DEVICE: 'BOOMERANG_DEVICE',
   BOOMERANG_USE_GPU: 'BOOMERANG_USE_GPU',
@@ -173,6 +195,9 @@ export const ENV_VARS = {
   BOOMERANG_CHUNK_OVERLAP: 'BOOMERANG_CHUNK_OVERLAP',
   BOOMERANG_MAX_FILE_SIZE: 'BOOMERANG_MAX_FILE_SIZE',
   BOOMERANG_ROOT_PATH: 'BOOMERANG_ROOT_PATH',
+  BOOMERANG_PAUSE_INDEXING: 'BOOMERANG_PAUSE_INDEXING',
+  BOOMERANG_PERIODIC_SCAN_INTERVAL_MS: 'BOOMERANG_PERIODIC_SCAN_INTERVAL_MS',
+  BOOMERANG_YIELD_MS: 'BOOMERANG_YIELD_MS',
 } as const;
 
 // ==================== Validation ====================
@@ -247,7 +272,7 @@ function parseEnvConfig(): Partial<Config> {
       batchSize: DEFAULT_CONFIG.model.batchSize,
     },
     database: {
-      dbPath: process.env[ENV_VARS.BOOMERANG_DB_PATH] || DEFAULT_CONFIG.database.dbPath,
+      dbPath: process.env[ENV_VARS.QDRANT_URL] || process.env[ENV_VARS.BOOMERANG_DB_PATH] || DEFAULT_CONFIG.database.dbPath,
       tableName: DEFAULT_CONFIG.database.tableName,
     },
     indexer: {
@@ -258,6 +283,18 @@ function parseEnvConfig(): Partial<Config> {
     },
     logging: {
       level: (process.env[ENV_VARS.BOOMERANG_LOG_LEVEL] as Config['logging']['level']) || DEFAULT_CONFIG.logging.level,
+    },
+    performance: {
+      workers: DEFAULT_CONFIG.performance.workers,
+      maxHeapMB: DEFAULT_CONFIG.performance.maxHeapMB,
+      flushIntervalMs: DEFAULT_CONFIG.performance.flushIntervalMs,
+      flushThreshold: DEFAULT_CONFIG.performance.flushThreshold,
+      memoryThreshold: DEFAULT_CONFIG.performance.memoryThreshold,
+      maxBufferBytes: DEFAULT_CONFIG.performance.maxBufferBytes,
+      indexOnStartup: DEFAULT_CONFIG.performance.indexOnStartup,
+      pauseIndexingDuringRequests: parseBoolean(process.env[ENV_VARS.BOOMERANG_PAUSE_INDEXING], DEFAULT_CONFIG.performance.pauseIndexingDuringRequests),
+      periodicScanIntervalMs: parseInt(process.env[ENV_VARS.BOOMERANG_PERIODIC_SCAN_INTERVAL_MS] || '', 10) || DEFAULT_CONFIG.performance.periodicScanIntervalMs,
+      yieldMs: parseInt(process.env[ENV_VARS.BOOMERANG_YIELD_MS] || '', 10) || DEFAULT_CONFIG.performance.yieldMs,
     },
   };
 }
@@ -296,6 +333,9 @@ async function loadJsonConfig(configPath: string): Promise<Partial<Config>> {
         memoryThreshold: json.performance.memoryThreshold ?? DEFAULT_CONFIG.performance.memoryThreshold,
         maxBufferBytes: json.performance.maxBufferBytes ?? DEFAULT_CONFIG.performance.maxBufferBytes,
         indexOnStartup: json.performance.indexOnStartup ?? DEFAULT_CONFIG.performance.indexOnStartup,
+        pauseIndexingDuringRequests: json.performance.pauseIndexingDuringRequests ?? DEFAULT_CONFIG.performance.pauseIndexingDuringRequests,
+        periodicScanIntervalMs: json.performance.periodicScanIntervalMs ?? DEFAULT_CONFIG.performance.periodicScanIntervalMs,
+        yieldMs: json.performance.yieldMs ?? DEFAULT_CONFIG.performance.yieldMs,
       } : undefined,
     };
   } catch {

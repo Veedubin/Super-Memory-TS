@@ -259,6 +259,17 @@ export class SuperMemoryServer {
       // Apply timeout to prevent requests from hanging indefinitely
       const requestTimeout = 60000; // 60 seconds
 
+      // High-priority tools that should pause indexing during execution
+      const highPriorityTools = ['query_memories', 'add_memory', 'search_project'];
+      const shouldPause = 
+        this.config.performance?.pauseIndexingDuringRequests !== false &&
+        highPriorityTools.includes(name) &&
+        this.context.indexer?.isIndexerRunning();
+
+      if (shouldPause) {
+        this.context.indexer!.pause();
+      }
+
       try {
         switch (name) {
           case 'query_memories':
@@ -284,13 +295,10 @@ export class SuperMemoryServer {
           default:
             throw new MemoryError(`Unknown tool: ${name}`, 'UNKNOWN_TOOL');
         }
-      } catch (error) {
-        // Check for "Not connected" errors and attempt recovery
-        if (error instanceof MemoryError && error.message.includes('Not connected')) {
-          logger.warn('Not connected error detected, checking transport state...');
-          // Don't retry immediately, just report the error
+      } finally {
+        if (shouldPause) {
+          this.context.indexer!.resume();
         }
-        return this.formatError(error);
       }
     });
   }

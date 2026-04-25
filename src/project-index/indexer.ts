@@ -20,6 +20,7 @@ import { generateEmbeddings } from '../model/embeddings.js';
 import { MemoryDatabase, getDatabase, type MemoryEntryInput } from '../memory/database.js';
 import { FileTracker } from './file-tracker.js';
 import { SnapshotIndex } from './snapshot.js';
+import { PauseController } from './pause-controller.js';
 import type {
   ProjectIndexConfig,
   ProjectIndexConfigInternal,
@@ -75,6 +76,11 @@ export class ProjectIndexer extends EventEmitter {
   private flushTimer: NodeJS.Timeout | null = null;
   private currentBufferBytes: number = 0;
 
+  // Pause/resume for priority indexing
+  private pauseController: PauseController = new PauseController();
+  private periodicScanTimer: NodeJS.Timeout | null = null;
+  private snapshotIndex: SnapshotIndex | null = null;
+
   // Memory warning cooldown to reduce log spam
   private lastMemoryWarning = 0;
   private readonly MEMORY_WARNING_COOLDOWN_MS = 5000; // Only warn every 5 seconds
@@ -105,6 +111,10 @@ export class ProjectIndexer extends EventEmitter {
       flushThreshold: config.flushThreshold ?? DEFAULT_FLUSH_THRESHOLD,
       memoryThreshold: config.memoryThreshold ?? DEFAULT_MEMORY_THRESHOLD,
       maxBufferBytes: config.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES,
+      indexingPriority: config.indexingPriority || 'normal',
+      pauseIndexingDuringRequests: config.pauseIndexingDuringRequests ?? true,
+      periodicScanIntervalMs: config.periodicScanIntervalMs ?? 300000,
+      yieldMs: config.yieldMs ?? 10,
     };
     
     // Use provided database, or shared singleton from getDatabase()
@@ -148,6 +158,9 @@ export class ProjectIndexer extends EventEmitter {
     const snapshotIndex = new SnapshotIndex(snapshotRootPath, defaultSnapshotPath);
     await snapshotIndex.init();
     
+    // Store snapshot index reference
+    this.snapshotIndex = snapshotIndex;
+    
     // Run snapshot scan to detect changed files
     logger.info('Running snapshot scan...');
     const delta = await snapshotIndex.scan();
@@ -165,14 +178,23 @@ export class ProjectIndexer extends EventEmitter {
     logger.info(`Processing ${filesToProcess.length} files (${delta.new.length} new, ${delta.changed.length} changed)`);
     
     for (const relPath of filesToProcess) {
+      // Yield to event loop for pause control
+      await this.pauseController.shouldYield();
+      
       const fullPath = resolve(snapshotRootPath, relPath);
       // Use precomputed hash from snapshot if available (from changed files)
       const precomputedHash = snapshotIndex.getFileHash(relPath);
       await this.processFile(fullPath, precomputedHash);
+      
+      // Yield to event loop after each file to prevent blocking
+      await this.yieldToEventLoop();
     }
     
     // Save snapshot after processing
     await snapshotIndex.save();
+
+    // Start periodic scan for incremental updates
+    this.startPeriodicScan();
 
     // Create and start the watcher with ignoreInitial so it doesn't re-process files
     this.watcher = createWatcher({
@@ -256,6 +278,12 @@ export class ProjectIndexer extends EventEmitter {
     // Wait for any pending processing to complete
     await this.waitForProcessingComplete();
 
+    // Clear periodic scan timer
+    if (this.periodicScanTimer) {
+      clearInterval(this.periodicScanTimer);
+      this.periodicScanTimer = null;
+    }
+
     if (this.watcher) {
       await this.watcher.stop();
       this.watcher = null;
@@ -270,6 +298,9 @@ export class ProjectIndexer extends EventEmitter {
    */
   private async handleFileEvent(event: FileEvent): Promise<void> {
     logger.debug(`handleFileEvent called: ${event.type} ${event.path}, pendingEventCount before=${this.pendingEventCount}`);
+    
+    // Yield to event loop if paused
+    await this.pauseController.shouldYield();
     
     // Avoid duplicate processing
     const existingPromise = this.processingPromises.get(event.path);
@@ -596,6 +627,9 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
    * Flush all pending chunks to the database using batch insert.
    */
   private async flushPendingChunks(): Promise<void> {
+    // Yield to event loop if paused
+    await this.pauseController.shouldYield();
+    
     if (this.pendingChunks.length === 0) {
       this.flushTimer = null;
       return;
@@ -685,6 +719,80 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
    */
   isIndexerRunning(): boolean {
     return this.isRunning;
+  }
+
+  /**
+   * Pause indexing operations
+   */
+  pause(): void {
+    this.pauseController.pause();
+  }
+
+  /**
+   * Resume indexing operations
+   */
+  resume(): void {
+    this.pauseController.resume();
+  }
+
+  /**
+   * Yield to event loop to allow other operations to run
+   */
+  private async yieldToEventLoop(): Promise<void> {
+    if (this.config.yieldMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, this.config.yieldMs));
+    }
+  }
+
+  /**
+   * Start periodic scan for incremental updates
+   */
+  private startPeriodicScan(): void {
+    const interval = this.config.periodicScanIntervalMs;
+    
+    if (interval <= 0) {
+      logger.debug('Periodic scan disabled');
+      return;
+    }
+
+    logger.debug(`Starting periodic scan every ${interval}ms`);
+    
+    this.periodicScanTimer = setInterval(async () => {
+      if (!this.isRunning) return;
+      
+      logger.debug('Running periodic scan...');
+      
+      try {
+        // Yield to pause controller
+        await this.pauseController.shouldYield();
+        
+        if (this.snapshotIndex) {
+          const delta = await this.snapshotIndex.scan();
+          
+          // Process new and changed files
+          for (const relPath of [...delta.new, ...delta.changed]) {
+            await this.pauseController.shouldYield();
+            const fullPath = resolve(this.config.rootPath, relPath);
+            const precomputedHash = this.snapshotIndex.getFileHash(relPath);
+            await this.processFile(fullPath, precomputedHash);
+            await this.yieldToEventLoop();
+          }
+          
+          // Handle deleted files
+          for (const relPath of delta.deleted) {
+            await this.pauseController.shouldYield();
+            const fullPath = resolve(this.config.rootPath, relPath);
+            await this.removeFile(fullPath);
+            this.snapshotIndex.markDeleted(relPath);
+          }
+          
+          // Save updated snapshot
+          await this.snapshotIndex.save();
+        }
+      } catch (error) {
+        logger.error('Periodic scan failed', { error: error instanceof Error ? error.message : String(error) });
+      }
+    }, interval);
   }
 
   /**
