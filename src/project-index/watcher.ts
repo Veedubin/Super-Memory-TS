@@ -12,9 +12,10 @@ import { logger } from '../utils/logger.js';
 import type { FileEvent, WatcherConfig } from './types.js';
 
 // Default watcher configuration
-const DEFAULT_CONFIG: Required<Pick<WatcherConfig, 'debounceMs' | 'ignoreHidden'>> = {
+const DEFAULT_CONFIG: Required<Pick<WatcherConfig, 'debounceMs' | 'ignoreHidden' | 'ignoreInitial'>> = {
   debounceMs: 500,
   ignoreHidden: true,
+  ignoreInitial: false,
 };
 
 // Patterns that are always excluded
@@ -65,6 +66,7 @@ export class ProjectWatcher extends EventEmitter {
       ],
       debounceMs: config.debounceMs ?? DEFAULT_CONFIG.debounceMs,
       ignoreHidden: config.ignoreHidden ?? DEFAULT_CONFIG.ignoreHidden,
+      ignoreInitial: config.ignoreInitial ?? DEFAULT_CONFIG.ignoreInitial,
     };
   }
   
@@ -106,7 +108,7 @@ export class ProjectWatcher extends EventEmitter {
         return this.isPathExcluded(path);
       },
       persistent: true,
-      ignoreInitial: false,
+      ignoreInitial: true,
       followSymlinks: false,
       usePolling: true,
       interval: 100,

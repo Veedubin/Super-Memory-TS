@@ -123,6 +123,7 @@ export interface WatcherConfig {
   excludePatterns: string[];
   debounceMs: number;
   ignoreHidden?: boolean;
+  ignoreInitial?: boolean;
 }
 
 // ==================== Indexer ====================

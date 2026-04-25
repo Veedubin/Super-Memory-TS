@@ -19,6 +19,7 @@ import { FileChunker, createChunker } from './chunker.js';
 import { generateEmbeddings } from '../model/embeddings.js';
 import { MemoryDatabase, getDatabase, type MemoryEntryInput } from '../memory/database.js';
 import { FileTracker } from './file-tracker.js';
+import { SnapshotIndex } from './snapshot.js';
 import type {
   ProjectIndexConfig,
   ProjectIndexConfigInternal,
@@ -78,7 +79,7 @@ export class ProjectIndexer extends EventEmitter {
   private lastMemoryWarning = 0;
   private readonly MEMORY_WARNING_COOLDOWN_MS = 5000; // Only warn every 5 seconds
 
-  constructor(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string) {
+  constructor(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string, _snapshotPath?: string) {
     super();
     
     // Build internal config with all required fields
@@ -123,7 +124,7 @@ export class ProjectIndexer extends EventEmitter {
   /**
    * Start the indexer - begin watching and initial indexing
    */
-  async start(): Promise<void> {
+  async start(snapshotPath?: string): Promise<void> {
     if (this.isRunning) {
       logger.warn('Indexer already running');
       return;
@@ -140,13 +141,47 @@ export class ProjectIndexer extends EventEmitter {
       logger.error('Failed to initialize database', { error: err.message });
     });
 
-    // Create and start the watcher
+    // Initialize snapshot index for incremental updates
+    const snapshotRootPath = this.config.rootPath;
+    const defaultSnapshotPath = snapshotPath || resolve(snapshotRootPath, '.opencode/super-memory-ts/snapshot.json');
+    
+    const snapshotIndex = new SnapshotIndex(snapshotRootPath, defaultSnapshotPath);
+    await snapshotIndex.init();
+    
+    // Run snapshot scan to detect changed files
+    logger.info('Running snapshot scan...');
+    const delta = await snapshotIndex.scan();
+    logger.info(`Snapshot scan complete: ${delta.unchanged.length} unchanged, ${delta.new.length} new, ${delta.changed.length} changed, ${delta.deleted.length} deleted`);
+    
+    // Handle deleted files - remove from database
+    for (const relPath of delta.deleted) {
+      const fullPath = resolve(snapshotRootPath, relPath);
+      await this.removeFile(fullPath);
+      snapshotIndex.markDeleted(relPath);
+    }
+    
+    // Process new and changed files
+    const filesToProcess = [...delta.new, ...delta.changed];
+    logger.info(`Processing ${filesToProcess.length} files (${delta.new.length} new, ${delta.changed.length} changed)`);
+    
+    for (const relPath of filesToProcess) {
+      const fullPath = resolve(snapshotRootPath, relPath);
+      // Use precomputed hash from snapshot if available (from changed files)
+      const precomputedHash = snapshotIndex.getFileHash(relPath);
+      await this.processFile(fullPath, precomputedHash);
+    }
+    
+    // Save snapshot after processing
+    await snapshotIndex.save();
+
+    // Create and start the watcher with ignoreInitial so it doesn't re-process files
     this.watcher = createWatcher({
       paths: [this.config.rootPath],
       includePatterns: this.config.includePatterns,
       excludePatterns: this.config.excludePatterns,
       debounceMs: 500,
       ignoreHidden: true,
+      ignoreInitial: true, // Snapshot scan handled initial indexing
     });
 
     // Handle file events
@@ -330,7 +365,7 @@ export class ProjectIndexer extends EventEmitter {
   /**
    * Process a file - read, hash, chunk, embed, and store
    */
-  async processFile(filePath: string): Promise<void> {
+  async processFile(filePath: string, precomputedHash?: string): Promise<void> {
     // Skip bad files at processFile level as safeguard
     const SKIP_EXTS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.tmp']);
     const SKIP_DIRS = ['lancedb', 'node_modules', '.git', 'dist', 'build'];
@@ -369,8 +404,8 @@ export class ProjectIndexer extends EventEmitter {
       const content = await readFile(filePath, 'utf-8');
       logger.debug(`Read file ${filePath}: ${content.length} chars`);
       
-      // Compute hash
-      const hash = this.computeHash(content);
+      // Compute hash - use precomputed xxhash from snapshot if available, otherwise compute SHA-256
+      const hash = precomputedHash || this.computeHash(content);
       
       // Check if file has changed
       const existing = this.fileTracker.getFile(filePath);
