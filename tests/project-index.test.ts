@@ -665,6 +665,58 @@ describe('ProjectIndexer', () => {
 
     await indexer.stop();
   }, 90000);
+
+  test('setRootPath and getRootPath should work correctly', async () => {
+    const testFile = join(testDir, 'test.ts');
+    await writeFile(testFile, 'export const x = 1;');
+
+    indexer = createIndexer({
+      rootPath: testDir,
+      includePatterns: ['**/*.ts'],
+      excludePatterns: [],
+      maxFileSize: 1024 * 1024,
+      chunkSize: 512,
+      chunkOverlap: 50,
+    }, db);
+
+    // Verify initial root path
+    expect(indexer.getRootPath()).toBe(testDir);
+
+    // Start indexer and wait for idle
+    await indexer.start();
+    await waitForIndexerIdle(indexer);
+
+    // Create a new test directory with different content
+    const newDir = join(TEST_PROJECT_DIR, 'new-indexer-dir-' + Date.now());
+    await mkdir(newDir, { recursive: true });
+    const newFile = join(newDir, 'new.ts');
+    await writeFile(newFile, 'export const y = 2;');
+
+    // Change root path to new directory
+    await indexer.setRootPath(newDir);
+    expect(indexer.getRootPath()).toBe(newDir);
+
+    // Clean up new directory
+    await rm(newDir, { recursive: true, force: true });
+
+    await indexer.stop();
+  }, 90000);
+
+  test('getRootPath should return configured path before start', async () => {
+    indexer = createIndexer({
+      rootPath: testDir,
+      includePatterns: ['**/*.ts'],
+      excludePatterns: [],
+      maxFileSize: 1024 * 1024,
+      chunkSize: 512,
+      chunkOverlap: 50,
+    }, db);
+
+    // getRootPath should work before start() is called
+    expect(indexer.getRootPath()).toBe(testDir);
+
+    await indexer.stop();
+  });
 });
 
 describe('Integration: Full Indexing Pipeline', () => {

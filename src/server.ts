@@ -186,42 +186,59 @@ export class SuperMemoryServer {
         annotations: { destructiveHint: true },
       },
       async ({ content, sourceType, sourcePath, metadata }: { content: string; sourceType: 'manual' | 'file' | 'conversation' | 'web'; sourcePath?: string; metadata?: Record<string, unknown> }) => {
-        // Check for duplicate content
-        const exists = await this.context.memory.contentExists(content);
-        if (exists) {
+        try {
+          // Check for duplicate content
+          const exists = await this.context.memory.contentExists(content);
+          if (exists) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: JSON.stringify({
+                  success: false,
+                  message: 'Memory with identical content already exists',
+                  duplicate: true,
+                }),
+              }],
+            };
+          }
+
+          const internalSourceType = this.mapSourceType(sourceType);
+
+          const input = {
+            text: content,
+            sourceType: internalSourceType,
+            sourcePath: sourcePath || '',
+            metadataJson: metadata ? JSON.stringify(metadata) : undefined,
+          };
+
+          console.error('[add_memory handler] Calling addMemory with input:', JSON.stringify({ text: input.text, sourceType: input.sourceType, sourcePath: input.sourcePath }));
+          const id = await this.context.memory.addMemory(input);
+          console.error('[add_memory handler] addMemory returned id:', id);
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: true,
+                id,
+                message: 'Memory added successfully',
+              }),
+            }],
+          };
+        } catch (err) {
+          console.error('[add_memory handler] ERROR:', err);
+          console.error('[add_memory handler] Stack:', err instanceof Error ? err.stack : 'unknown');
           return {
             content: [{
               type: 'text' as const,
               text: JSON.stringify({
                 success: false,
-                message: 'Memory with identical content already exists',
-                duplicate: true,
+                message: `Error adding memory: ${err instanceof Error ? err.message : 'Unknown error'}`,
               }),
             }],
+            isError: true,
           };
         }
-
-        const internalSourceType = this.mapSourceType(sourceType);
-
-        const input = {
-          text: content,
-          sourceType: internalSourceType,
-          sourcePath: sourcePath || '',
-          metadataJson: metadata ? JSON.stringify(metadata) : undefined,
-        };
-
-        const id = await this.context.memory.addMemory(input);
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              success: true,
-              id,
-              message: 'Memory added successfully',
-            }),
-          }],
-        };
       }
     );
 
@@ -288,7 +305,7 @@ export class SuperMemoryServer {
       }
     );
 
-    // index_project tool
+      // index_project tool
     this.server.registerTool(
       'index_project',
       {
@@ -300,7 +317,24 @@ export class SuperMemoryServer {
         annotations: { destructiveHint: true },
       },
       async ({ path, force }: { path?: string; force: boolean }) => {
-        if (!this.context.indexer) {
+        // Handle path parameter - reconfigure or create indexer with specified path
+        if (path) {
+          if (this.context.indexer) {
+            // Reconfigure existing indexer to use the new path
+            await this.context.indexer.setRootPath(path);
+          } else {
+            // Create new indexer with specified path
+            const projectId = this.config.database.projectId;
+            this.context.indexer = new ProjectIndexer({
+              rootPath: path,
+              includePatterns: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.py', '**/*.md'],
+              excludePatterns: this.config.indexer?.excludePatterns || ['node_modules', '.git', 'dist'],
+              chunkSize: this.config.indexer?.chunkSize || 512,
+              chunkOverlap: this.config.indexer?.chunkOverlap || 50,
+              maxFileSize: this.config.indexer?.maxFileSize || 10 * 1024 * 1024,
+            }, undefined, this.config.database.qdrantUrl, projectId);
+          }
+        } else if (!this.context.indexer) {
           return {
             content: [{
               type: 'text' as const,
@@ -316,7 +350,7 @@ export class SuperMemoryServer {
           this.context.indexer.clearIndex();
         }
 
-        const indexPath = path || this.config.database.qdrantUrl || this.config.database.dbPath || process.cwd();
+        const indexPath = this.context.indexer.getRootPath();
         logger.info(`Indexing project: ${indexPath} (force: ${force})`);
 
         try {

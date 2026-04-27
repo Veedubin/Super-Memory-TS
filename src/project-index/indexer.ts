@@ -734,6 +734,42 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
   }
 
   /**
+   * Get current root path
+   */
+  getRootPath(): string {
+    return this.config.rootPath;
+  }
+
+  /**
+   * Reconfigure indexer for a different root path
+   */
+  async setRootPath(newPath: string): Promise<void> {
+    if (newPath === this.config.rootPath) {
+      return;
+    }
+
+    logger.info(`Changing indexer root path from ${this.config.rootPath} to ${newPath}`);
+
+    // Stop if running
+    if (this.isRunning) {
+      await this.stop();
+    }
+
+    // Update config
+    this.config.rootPath = newPath;
+
+    // Clear snapshot index (it references old path)
+    this.snapshotIndex = null;
+
+    // Reset stats by clearing the file tracker
+    this.fileTracker = new FileTracker(resolve(this.config.rootPath, '../file_tracker.db'));
+
+    // Clear pending chunks
+    this.pendingChunks = [];
+    this.currentBufferBytes = 0;
+  }
+
+  /**
    * Pause indexing operations
    */
   pause(): void {

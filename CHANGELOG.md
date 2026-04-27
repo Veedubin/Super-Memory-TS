@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.2] - 2026-04-27
+
+### Fixed
+- `index_project` MCP tool now correctly respects the `path` parameter
+- Pre-existing lint error in `database.ts:189` unused variable
+
+### Changed
+- Added `sharp@0.33.0` override to reduce `prebuild-install` deprecation warnings
+
 ## [2.2.1] - 2026-04-27
 
 ### Fixed

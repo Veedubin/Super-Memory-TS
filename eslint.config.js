@@ -34,7 +34,7 @@ export default [
       // Allow @ts-expect-error comments
       '@typescript-eslint/ban-ts-comment': 'off',
       // Adjust TypeScript-specific rules as needed
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
       // Allow explicit any for now
       '@typescript-eslint/no-explicit-any': 'warn',
     },

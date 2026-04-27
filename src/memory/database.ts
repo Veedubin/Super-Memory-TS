@@ -186,7 +186,7 @@ export class MemoryDatabase {
     // Health check - verify Qdrant is reachable
     try {
       await this.client.getCollections();
-    } catch (err) {
+    } catch (_err) {
       throw new Error(
         `Cannot connect to Qdrant at ${this.qdrantUrl}. Ensure Qdrant is running: docker run -p 6333:6333 qdrant/qdrant`
       );
@@ -243,9 +243,9 @@ export class MemoryDatabase {
           field_name: field,
           field_schema: type,
         });
-      } catch (err) {
+    } catch (_err) {
         // Index may already exist — non-fatal
-        logger.warn(`Payload index warning for ${field}:`, err);
+        logger.warn(`Payload index warning for ${field}:`, _err);
       }
     }
   }
