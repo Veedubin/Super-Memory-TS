@@ -2,7 +2,10 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { MemoryDatabase } from '../src/memory/database.js';
 
-describe('Qdrant Integration', () => {
+// Skip integration tests in CI - they require a running Qdrant instance
+const describeIf = process.env.CI ? describe.skip : describe;
+
+describeIf('Qdrant Integration', () => {
   let db: MemoryDatabase;
   let client: QdrantClient;
   const testUrl = process.env.TEST_QDRANT_URL || 'http://localhost:6333';
