@@ -288,11 +288,11 @@ export class ProjectIndexer extends EventEmitter {
         resolve();
       });
       
-      // Also set a timeout as a safety net
+      // Also set a timeout as a safety net (10 minutes for large projects)
       setTimeout(() => {
         logger.warn('start() timeout reached, proceeding anyway');
         resolve();
-      }, 30000);
+      }, 10 * 60 * 1000);
     });
     
     logger.debug(`start() returning. indexedFiles=${this.fileTracker.getAllFiles().size}`);
@@ -890,6 +890,62 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
       this.fileTracker.removeFile(filePath);
     }
     logger.info('Index cleared');
+  }
+
+  /**
+   * Get file contents by reconstructing from indexed chunks.
+   */
+  async getFileContents(filePath: string): Promise<{ content: string; chunks: ProjectChunk[]; lineCount: number; indexedAt: Date } | null> {
+    // Get all chunks for this file from the database
+    const entries = await this.db.getEntriesBySourcePath(filePath, 'project');
+
+    if (entries.length === 0) {
+      return null;
+    }
+
+    // Parse chunk metadata and sort by chunkIndex
+    const chunks: ProjectChunk[] = [];
+    let lastModified: Date = new Date();
+
+    for (const entry of entries) {
+      if (entry.metadataJson) {
+        try {
+          const meta = JSON.parse(entry.metadataJson);
+          chunks.push({
+            id: entry.id,
+            filePath: entry.sourcePath || filePath,
+            content: entry.text,
+            vector: entry.vector,
+            chunkIndex: meta.chunkIndex ?? 0,
+            totalChunks: meta.totalChunks ?? 1,
+            fileType: meta.fileType || this.getFileType(filePath),
+            contentHash: entry.contentHash,
+            lastModified: entry.timestamp,
+            lineStart: meta.lineStart ?? 0,
+            lineEnd: meta.lineEnd ?? 0,
+          });
+          lastModified = entry.timestamp;
+        } catch {
+          // Skip entries with invalid metadata
+        }
+      }
+    }
+
+    // Sort by chunkIndex
+    chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+    // Concatenate text fields in order
+    const content = chunks.map(c => c.content).join('');
+
+    // Count lines
+    const lineCount = content.split('\n').length;
+
+    return {
+      content,
+      chunks,
+      lineCount,
+      indexedAt: lastModified,
+    };
   }
 
   /**

@@ -84,7 +84,7 @@ const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = {
   pauseIndexingDuringRequests: true,
   periodicScanIntervalMs: 300000, // 5 minutes
   yieldMs: 10,
-  requestTimeoutMs: 180000, // 3 minutes
+  requestTimeoutMs: 300000, // 5 minutes - generous timeout for heavy operations
 };
 
 const DEFAULT_CONFIG: Config = {

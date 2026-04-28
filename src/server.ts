@@ -139,6 +139,19 @@ const jobTracker = new JobTracker();
 // ==================== Helper Functions ====================
 
 /**
+ * Wraps a promise with an operation-level timeout.
+ * If the operation exceeds the timeout, it will be rejected with a timeout error.
+ */
+function withTimeout<T>(operation: Promise<T>, timeoutMs: number, operationName: string): Promise<T> {
+  return Promise.race([
+    operation,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${operationName} timed out after ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ]);
+}
+
+/**
  * Map user-friendly source type to internal type
  */
 function mapSourceType(input: string): MemorySourceType {
@@ -278,8 +291,8 @@ export class SuperMemoryServer {
         // Wait for initial indexing to complete
         await new Promise<void>((resolve) => {
           indexer.once('stats', () => resolve());
-          // Safety timeout - if no stats event within 5 minutes, complete anyway
-          setTimeout(resolve, 5 * 60 * 1000);
+          // Safety timeout - if no stats event within 15 minutes, complete anyway
+          setTimeout(resolve, 15 * 60 * 1000);
         });
 
         clearInterval(pollInterval);
@@ -330,7 +343,12 @@ export class SuperMemoryServer {
           strategy: internalStrategy,
         };
 
-        const results = await this.context.memory.queryMemories(query, searchOpts);
+        // Wrap query operation with 30s timeout to prevent hanging
+        const results = await withTimeout(
+          this.context.memory.queryMemories(query, searchOpts),
+          30000,
+          'query_memories'
+        );
 
         return {
           content: [{
@@ -385,7 +403,12 @@ export class SuperMemoryServer {
           };
 
           console.error('[add_memory handler] Calling addMemory with input:', JSON.stringify({ text: input.text, sourceType: input.sourceType, sourcePath: input.sourcePath }));
-          const id = await this.context.memory.addMemory(input);
+          // Wrap addMemory with 30s timeout to prevent hanging
+          const id = await withTimeout(
+            this.context.memory.addMemory(input),
+            30000,
+            'add_memory'
+          );
           console.error('[add_memory handler] addMemory returned id:', id);
 
           return {
@@ -628,6 +651,109 @@ export class SuperMemoryServer {
             }),
           }],
         };
+      }
+    );
+
+    // get_file_contents tool
+    this.server.registerTool(
+      'get_file_contents',
+      {
+        description: 'Reconstruct file contents from indexed chunks. Returns the full file content by concatenating all chunks in order.',
+        inputSchema: {
+          filePath: z.string().min(1).describe('The path to the file to reconstruct'),
+          triggerIndex: z.boolean().default(false).describe('If true and file not found in index, trigger indexing'),
+        },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ filePath, triggerIndex }: { filePath: string; triggerIndex: boolean }) => {
+        if (!this.context.indexer) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: 'Project indexer not initialized',
+              }),
+            }],
+            isError: true,
+          };
+        }
+
+        // Pause indexing during read
+        if (this.context.indexer.isIndexerRunning()) {
+          this.context.indexer.pause();
+        }
+
+        try {
+          const result = await this.context.indexer.getFileContents(filePath);
+
+          if (!result) {
+            // File not indexed - optionally trigger indexing
+            if (triggerIndex) {
+              // Trigger background indexing
+              const jobId = jobTracker.createJob();
+              this.spawnBackgroundIndexing(jobId);
+
+              return {
+                content: [{
+                  type: 'text' as const,
+                  text: JSON.stringify({
+                    success: false,
+                    filePath,
+                    message: 'File not found in index. Indexing triggered.',
+                    jobId,
+                    status: 'started',
+                  }),
+                }],
+              };
+            }
+
+            return {
+              content: [{
+                type: 'text' as const,
+                text: JSON.stringify({
+                  success: false,
+                  filePath,
+                  error: 'File not found in index',
+                  message: 'Use triggerIndex=true to index this file',
+                }),
+              }],
+            };
+          }
+
+          // Check content size - truncate if exceeds 100KB
+          const MAX_CONTENT_SIZE = 100 * 1024; // 100KB
+          const contentSize = Buffer.byteLength(result.content, 'utf8');
+          const truncated = contentSize > MAX_CONTENT_SIZE;
+
+          let content = result.content;
+          if (truncated) {
+            content = result.content.slice(0, MAX_CONTENT_SIZE);
+          }
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: true,
+                filePath,
+                content,
+                chunks: result.chunks.map(c => ({
+                  chunkIndex: c.chunkIndex,
+                  lineStart: c.lineStart,
+                  lineEnd: c.lineEnd,
+                })),
+                lineCount: result.lineCount,
+                indexedAt: result.indexedAt,
+                truncated,
+              }),
+            }],
+          };
+        } finally {
+          if (this.context.indexer.isIndexerRunning()) {
+            this.context.indexer.resume();
+          }
+        }
       }
     );
   }

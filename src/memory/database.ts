@@ -39,9 +39,22 @@ function computeHash(text: string): string {
 
 const clients: Map<string, QdrantClient> = new Map();
 
+/**
+ * Validate that a client connection is healthy by checking collections.
+ * Returns true if connection is working, false otherwise.
+ */
+async function validateConnection(client: QdrantClient): Promise<boolean> {
+  try {
+    await client.getCollections();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getClient(url: string): QdrantClient {
   if (!clients.has(url)) {
-    clients.set(url, new QdrantClient({ url, timeout: 10000 }));
+    clients.set(url, new QdrantClient({ url, timeout: 60000, checkCompatibility: false }));
   }
   return clients.get(url)!;
 }
@@ -54,11 +67,28 @@ export function clearClientCache(): void {
 }
 
 /**
- * Retry wrapper for transient network errors
+ * Retry wrapper for transient network errors with optional connection validation.
+ * Before each attempt, validates the connection is healthy and recreates if needed.
  */
-async function withRetry<T>(operation: () => Promise<T>, retries = 3): Promise<T> {
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  url: string,
+  retries = 3
+): Promise<T> {
   for (let i = 0; i < retries; i++) {
     try {
+      // Get current client and validate health before operation
+      const client = clients.get(url);
+      if (client) {
+        const healthy = await validateConnection(client);
+        if (!healthy) {
+          // Connection dead - recreate
+          clients.delete(url);
+          const newClient = new QdrantClient({ url, timeout: 60000, checkCompatibility: false });
+          clients.set(url, newClient);
+        }
+      }
+
       return await operation();
     } catch (err) {
       if (i === retries - 1) throw err;
@@ -187,16 +217,23 @@ export class MemoryDatabase {
     try {
       await this.client.getCollections();
     } catch (_err) {
-      throw new Error(
-        `Cannot connect to Qdrant at ${this.qdrantUrl}. Ensure Qdrant is running: docker run -p 6333:6333 qdrant/qdrant`
-      );
+      // Try recreating client in case connection went stale
+      clients.delete(this.qdrantUrl);
+      this.client = getClient(this.qdrantUrl);
+      try {
+        await this.client.getCollections();
+      } catch {
+        throw new Error(
+          `Cannot connect to Qdrant at ${this.qdrantUrl}. Ensure Qdrant is running: docker run -p 6333:6333 qdrant/qdrant`
+        );
+      }
     }
 
     const modelManager = ModelManager.getInstance();
     const embeddingDim = modelManager.getDimensions();
 
     // Check if collection exists
-    const collections = await withRetry(() => this.client.getCollections());
+    const collections = await withRetry(() => this.client.getCollections(), this.qdrantUrl);
     const exists = collections.collections.some(c => c.name === MEMORY_TABLE_NAME);
 
     if (!exists) {
@@ -207,7 +244,7 @@ export class MemoryDatabase {
           distance: 'Cosine',
         },
         hnsw_config: QDRANT_HNSW_CONFIG,
-      }));
+      }), this.qdrantUrl);
 
       // Create payload indexes for fields used in filtering
       await this.createPayloadIndexes();
@@ -284,7 +321,7 @@ export class MemoryDatabase {
       return toPoint(id, embeddingResults[idx].embedding, entry, timestamp, contentHash, this.projectId);
     });
 
-    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points }));
+    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points }), this.qdrantUrl);
 
     return points.map(p => pointToMemoryEntry({
       ...p,
@@ -314,7 +351,7 @@ export class MemoryDatabase {
 
     const point = toPoint(id, vector, input, timestamp, contentHash, this.projectId);
     try {
-      await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }));
+      await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }), this.qdrantUrl);
     } catch (upsertErr) {
       console.error('[DEBUG] Qdrant upsert failed:', upsertErr);
       throw upsertErr;
@@ -331,7 +368,7 @@ export class MemoryDatabase {
       ids: [id],
       with_payload: true,
       with_vector: true,
-    }));
+    }), this.qdrantUrl);
 
     if (results.length === 0) return null;
     return pointToMemoryEntry(results[0]);
@@ -343,7 +380,7 @@ export class MemoryDatabase {
   async deleteMemory(id: string): Promise<void> {
     await withRetry(() => this.client.delete(MEMORY_TABLE_NAME, {
       points: [id],
-    }));
+    }), this.qdrantUrl);
   }
 
   /**
@@ -372,9 +409,9 @@ export class MemoryDatabase {
     const countResult = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
       filter,
       exact: true,
-    }));
+    }), this.qdrantUrl);
 
-    await withRetry(() => this.client.delete(MEMORY_TABLE_NAME, { filter }));
+    await withRetry(() => this.client.delete(MEMORY_TABLE_NAME, { filter }), this.qdrantUrl);
 
     return countResult.count;
   }
@@ -418,7 +455,7 @@ export class MemoryDatabase {
       filter,
       with_payload: true,
       with_vector: false,
-    }));
+    }), this.qdrantUrl);
 
     // Deduplicate by contentHash and return topK
     const seen = new Set<string>();
@@ -470,7 +507,7 @@ export class MemoryDatabase {
       limit: 100,
       with_payload: true,
       with_vector: false,
-    }));
+    }), this.qdrantUrl);
 
     return results.points.map(p => pointToMemoryEntry(p));
   }
@@ -481,7 +518,7 @@ export class MemoryDatabase {
   async countMemories(): Promise<number> {
     const projectFilter = this.getProjectFilter();
     const filter = projectFilter || undefined;
-    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, { filter, exact: true }));
+    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, { filter, exact: true }), this.qdrantUrl);
     return result.count;
   }
 
@@ -503,7 +540,7 @@ export class MemoryDatabase {
     const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
       filter,
       exact: true,
-    }));
+    }), this.qdrantUrl);
     return result.count > 0;
   }
 
@@ -512,13 +549,13 @@ export class MemoryDatabase {
    */
   async storeModelMetadata(modelId: string, dimensions: number): Promise<void> {
     // Ensure metadata collection exists
-    const collections = await withRetry(() => this.client.getCollections());
+    const collections = await withRetry(() => this.client.getCollections(), this.qdrantUrl);
     const metaExists = collections.collections.some(c => c.name === QDRANT_METADATA_COLLECTION);
 
     if (!metaExists) {
       await withRetry(() => this.client.createCollection(QDRANT_METADATA_COLLECTION, {
         vectors: { size: 1, distance: 'Cosine' }, // Dummy vector for single-point collection
-      }));
+      }), this.qdrantUrl);
     }
 
     await withRetry(() => this.client.upsert(QDRANT_METADATA_COLLECTION, {
@@ -527,7 +564,7 @@ export class MemoryDatabase {
         vector: [0],
         payload: { modelId, dimensions, updatedAt: Date.now() },
       }],
-    }));
+    }), this.qdrantUrl);
   }
 
   /**
@@ -535,14 +572,14 @@ export class MemoryDatabase {
    */
   async getStoredModelMetadata(): Promise<{ modelId: string; dimensions: number } | null> {
     try {
-      const collections = await withRetry(() => this.client.getCollections());
+      const collections = await withRetry(() => this.client.getCollections(), this.qdrantUrl);
       const metaExists = collections.collections.some(c => c.name === QDRANT_METADATA_COLLECTION);
       if (!metaExists) return null;
 
       const result = await withRetry(() => this.client.retrieve(QDRANT_METADATA_COLLECTION, {
         ids: ['00000000-0000-0000-0000-000000000000'],
         with_payload: true,
-      }));
+      }), this.qdrantUrl);
 
       if (result.length === 0 || !result[0].payload) return null;
 
@@ -573,6 +610,49 @@ export class MemoryDatabase {
       ].join('\n');
       throw new Error(errorMsg);
     }
+  }
+
+  /**
+   * Get all entries from a specific source path with optional sourceType filter.
+   * Uses scroll API with pagination for large result sets.
+   */
+  async getEntriesBySourcePath(sourcePath: string, sourceType?: string): Promise<MemoryEntry[]> {
+    const must: Record<string, unknown>[] = [
+      { key: PAYLOAD_FIELDS.sourcePath, match: { value: sourcePath } },
+    ];
+
+    if (sourceType) {
+      must.push({
+        key: PAYLOAD_FIELDS.sourceType,
+        match: { value: sourceType },
+      });
+    }
+
+    const projectFilter = this.getProjectFilter();
+    if (projectFilter) {
+      must.push(projectFilter);
+    }
+
+    const filter = { must };
+
+    const entries: MemoryEntry[] = [];
+    let scrollId: string | undefined;
+
+    // Paginate through all results
+    do {
+      const result = await withRetry(() => this.client.scroll(MEMORY_TABLE_NAME, {
+        filter,
+        limit: 100,
+        offset: scrollId,
+        with_payload: true,
+        with_vector: false,
+      }), this.qdrantUrl);
+
+      entries.push(...result.points.map(p => pointToMemoryEntry(p)));
+      scrollId = typeof result.next_page_offset === 'string' ? result.next_page_offset : undefined;
+    } while (scrollId);
+
+    return entries;
   }
 
   /**

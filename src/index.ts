@@ -69,15 +69,15 @@ function setupShutdownHandlers(): void {
   // Handle uncaught exceptions - log before exit with graceful shutdown
   process.on('uncaughtException', (error) => {
     logger.error('Uncaught exception', error);
-    // Give logger and in-flight requests time to complete before exit
-    setTimeout(() => process.exit(1), 5000);
+    // Give logger and in-flight requests time to complete before exit (30 seconds)
+    setTimeout(() => process.exit(1), 30000);
   });
 
   // Handle unhandled promise rejections - log before exit with graceful shutdown
   process.on('unhandledRejection', (reason, promise) => {
     logger.error('Unhandled rejection', { reason, promise });
-    // Give logger and in-flight requests time to complete before exit
-    setTimeout(() => process.exit(1), 5000);
+    // Give logger and in-flight requests time to complete before exit (30 seconds)
+    setTimeout(() => process.exit(1), 30000);
   });
 }
 

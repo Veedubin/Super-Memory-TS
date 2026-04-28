@@ -2,7 +2,7 @@
 
 **Local-first semantic memory server with project indexing for AI assistants.**
 
-> **Version**: v2.2.2 | **Database**: Qdrant | **Embeddings**: BGE-Large (GPU) / MiniLM-L6-v2 (CPU)
+> **Version**: v2.3.2 | **Database**: Qdrant (HNSW indexing, payload filtering) | **Embeddings**: BGE-Large (GPU, 1024-dim) / MiniLM-L6-v2 (CPU, 384-dim) | **Precision**: fp16 (~325MB)
 
 Super-Memory-TS is a TypeScript implementation of a persistent, local-first memory system that provides semantic search over memories and project code using embeddings and vector search. It runs as an MCP (Model Context Protocol) server, enabling AI assistants like Boomerang to store, retrieve, and search through accumulated knowledge.
 
@@ -41,11 +41,12 @@ Super-Memory v2 is a complete rewrite of the original Python-based memory system
 | **BGE-Large Embeddings** | 1024-dimensional embeddings from BAAI/bge-large-en-v1.5 |
 | **MiniLM Fallback** | CPU-friendly 384-dimensional embeddings from sentence-transformers/all-MiniLM-L6-v2 |
 | **HNSW Index** | IVF_HNSW_SQ index for optimal recall/speed tradeoff |
-| **Incremental Indexing** | SHA-256 hash-based change detection for efficient updates |
+| **Incremental Indexing** | xxhash-wasm snapshot-based change detection (10x faster than SHA-256) |
 | **Semantic Chunking** | Intelligent code splitting at function/class boundaries |
 | **Reference Counting** | Singleton model manager prevents VRAM duplication |
 | **Project Isolation** | Payload-based filtering by `projectId` for multi-project memory separation |
-| **Tiered Search** | Fast Reply (tiered) and Archivist (parallel) search modes |
+| **Tiered Search** | `tiered` (default), `vector_only`, `text_only` search strategies |
+| **Snapshot Indexing** | `.opencode/super-memory-ts/snapshot.json` for persistent file tracking |
 
 ---
 
@@ -508,6 +509,17 @@ npm run build
 npm start
 ```
 
+### Build Commands
+
+| Command | Purpose |
+|---------|---------|
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm run typecheck` | Type-check without emitting (`tsc --noEmit`) |
+| `npm run prepublishOnly` | Runs `npm run build` before publish |
+| `npm run dev` | Watch mode with `tsx` |
+| `npm run test` | Run tests with `bun test` |
+| `npm run lint` | ESLint on `src/` |
+
 ### 3. Basic Usage Example
 
 ```typescript
@@ -602,7 +614,7 @@ Settings are merged in the following order (highest to lowest):
 
 ### MCP Tools
 
-The server provides four MCP tools:
+The server provides five MCP tools:
 
 #### `query_memories`
 
@@ -767,6 +779,50 @@ Trigger project indexing.
 
 ---
 
+#### `get_file_contents`
+
+Reconstruct file contents from indexed chunks.
+
+**Arguments**:
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `filePath` | string | Yes | - | Path to the file to reconstruct |
+| `triggerIndex` | boolean | No | `false` | If true and file not found, trigger indexing |
+
+**Example**:
+
+```json
+{
+  "filePath": "src/server.ts",
+  "triggerIndex": false
+}
+```
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "filePath": "src/server.ts",
+  "content": "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';\n...",
+  "chunks": [
+    { "chunkIndex": 0, "lineStart": 1, "lineEnd": 25 },
+    { "chunkIndex": 1, "lineStart": 26, "lineEnd": 50 }
+  ],
+  "lineCount": 850,
+  "indexedAt": "2026-04-28T10:35:00Z",
+  "truncated": false
+}
+```
+
+**Notes**:
+- Content is reconstructed by concatenating indexed chunks in order
+- Max content size: 100KB (returns `truncated: true` if exceeded)
+- Pauses/resumes indexer during read operations
+
+---
+
 ### Configuration File Format
 
 The `super-memory.json` configuration file:
@@ -857,6 +913,20 @@ Strategy: TIERED
 | Memory add (with embedding) | ~20/sec |
 | Memory query | ~100/sec |
 | Project file indexing | ~100 files/min |
+
+---
+
+### Security
+
+**Accepted Vulnerabilities** (with monitoring schedule):
+
+| Package | Vulnerability | Status | Notes |
+|---------|---------------|--------|-------|
+| `uuid` | CVE-2024-21539 | Accepted | Monitoring for patch updates |
+| `@modelcontextprotocol/sdk` | Moderate | Accepted | Used for MCP protocol; monitoring |
+| `protobufjs` | Moderate | Accepted | Used for serialization; monitoring |
+
+**Monitoring**: Run `npm audit` monthly to check for new vulnerabilities. Update packages when security patches become available without breaking changes.
 
 ---
 
