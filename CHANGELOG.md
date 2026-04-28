@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.3] - 2026-04-28
+
+### Fixed
+- Qdrant client connection stability issues
+- Reduced timeout from 120s to 60s to fail faster on connection problems
+- Added checkCompatibility: false to prevent version check hangs
+- Added connection health validation with automatic client recreation
+- Stale connections now detected and recreated instead of persisting
+
 ## [2.3.1] - 2026-04-27
 
 ### Fixed
