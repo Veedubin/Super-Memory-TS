@@ -9,3 +9,13 @@ memory_data/
 file_tracker.db
 http:/
 qdrant_storage/
+HANDOFF.md
+IMPLEMENTATION_PLAN.md
+PROJECT_ISOLATION_PLAN.md
+QDRANT_MIGRATION_PLAN.md
+SNAPSHOT_DESIGN.md
+TASKS.md
+test-mcp-error.mjs
+test-model.test
+test-memory-save.ts
+test_lancedb_issue/
