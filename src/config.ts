@@ -63,6 +63,8 @@ export interface PerformanceConfig {
   periodicScanIntervalMs: number;
   yieldMs: number;
   requestTimeoutMs: number; // default: 180000
+  qdrantMaxRetries: number; // default: 3
+  qdrantRetryDelayMs: number; // default: 1000
 }
 
 // ==================== Constants ====================
@@ -85,6 +87,8 @@ const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = {
   periodicScanIntervalMs: 300000, // 5 minutes
   yieldMs: 10,
   requestTimeoutMs: 300000, // 5 minutes - generous timeout for heavy operations
+  qdrantMaxRetries: 3,
+  qdrantRetryDelayMs: 1000,
 };
 
 const DEFAULT_CONFIG: Config = {
@@ -191,6 +195,8 @@ function validatePerformanceConfig(config: PerformanceConfig): PerformanceValida
 
 export const ENV_VARS = {
   QDRANT_URL: 'QDRANT_URL',
+  QDRANT_MAX_RETRIES: 'QDRANT_MAX_RETRIES',
+  QDRANT_RETRY_DELAY_MS: 'QDRANT_RETRY_DELAY_MS',
   BOOMERANG_PRECISION: 'BOOMERANG_PRECISION',
   BOOMERANG_DEVICE: 'BOOMERANG_DEVICE',
   BOOMERANG_USE_GPU: 'BOOMERANG_USE_GPU',
@@ -340,6 +346,8 @@ function parseEnvConfig(): Partial<Config> {
       periodicScanIntervalMs: parseInt(process.env[ENV_VARS.BOOMERANG_PERIODIC_SCAN_INTERVAL_MS] || '', 10) || DEFAULT_CONFIG.performance.periodicScanIntervalMs,
       yieldMs: parseInt(process.env[ENV_VARS.BOOMERANG_YIELD_MS] || '', 10) || DEFAULT_CONFIG.performance.yieldMs,
       requestTimeoutMs: DEFAULT_CONFIG.performance.requestTimeoutMs,
+      qdrantMaxRetries: parseInt(process.env[ENV_VARS.QDRANT_MAX_RETRIES] || '', 10) || DEFAULT_CONFIG.performance.qdrantMaxRetries,
+      qdrantRetryDelayMs: parseInt(process.env[ENV_VARS.QDRANT_RETRY_DELAY_MS] || '', 10) || DEFAULT_CONFIG.performance.qdrantRetryDelayMs,
     },
   };
 }
@@ -383,6 +391,8 @@ async function loadJsonConfig(configPath: string): Promise<Partial<Config>> {
         periodicScanIntervalMs: json.performance.periodicScanIntervalMs ?? DEFAULT_CONFIG.performance.periodicScanIntervalMs,
         yieldMs: json.performance.yieldMs ?? DEFAULT_CONFIG.performance.yieldMs,
         requestTimeoutMs: json.performance.requestTimeoutMs ?? DEFAULT_CONFIG.performance.requestTimeoutMs,
+        qdrantMaxRetries: json.performance.qdrantMaxRetries ?? DEFAULT_CONFIG.performance.qdrantMaxRetries,
+        qdrantRetryDelayMs: json.performance.qdrantRetryDelayMs ?? DEFAULT_CONFIG.performance.qdrantRetryDelayMs,
       } : undefined,
     };
   } catch {

@@ -196,6 +196,7 @@ function pointToMemoryEntry(point: Schemas['ScoredPoint'] | Schemas['Record']): 
 
 export class MemoryDatabase {
   private initialized: boolean = false;
+  private connected: boolean = false;
   private client: QdrantClient;
   private qdrantUrl: string;
   private projectId?: string;
@@ -221,25 +222,27 @@ export class MemoryDatabase {
   }
 
   /**
+   * Check if the database is connected (last health check succeeded)
+   */
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  /**
    * Initialize the Qdrant collection
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Health check - verify Qdrant is reachable
+    // Health check with retry - verify Qdrant is reachable
     try {
-      await this.client.getCollections();
+      await withRetry(() => this.client.getCollections(), this.qdrantUrl);
+      this.connected = true;
     } catch (_err) {
-      // Try recreating client in case connection went stale
-      removeClient(this.qdrantUrl);
-      this.client = getClient(this.qdrantUrl);
-      try {
-        await this.client.getCollections();
-      } catch {
-        throw new Error(
-          `Cannot connect to Qdrant at ${this.qdrantUrl}. Ensure Qdrant is running: docker run -p 6333:6333 qdrant/qdrant`
-        );
-      }
+      this.connected = false;
+      throw new Error(
+        `Cannot connect to Qdrant at ${this.qdrantUrl}. Ensure Qdrant is running: docker run -p 6333:6333 qdrant/qdrant`
+      );
     }
 
     const modelManager = ModelManager.getInstance();
@@ -674,6 +677,7 @@ export class MemoryDatabase {
   async close(): Promise<void> {
     removeClient(this.qdrantUrl);
     this.initialized = false;
+    this.connected = false;
   }
 }
 

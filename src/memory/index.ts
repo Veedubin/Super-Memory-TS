@@ -39,6 +39,14 @@ import { MemorySearch } from './search.js';
 import type { MemoryEntry, MemoryEntryInput, SearchOptions } from './schema.js';
 
 /**
+ * Options for memory initialization
+ */
+export interface InitializeOptions {
+  maxRetries?: number;
+  retryDelayMs?: number;
+}
+
+/**
  * MemorySystem - High-level memory interface
  *
  * Combines database and search operations into a single interface.
@@ -58,11 +66,11 @@ export class MemorySystem {
   }
 
   /**
-   * Initialize the memory system
+   * Initialize the memory system with optional retry options
    * Must be called before any memory operations
    * Prevents multiple simultaneous initialization calls
    */
-  async initialize(dbUri?: string): Promise<void> {
+  async initialize(dbUri?: string, options?: InitializeOptions): Promise<void> {
     // If already initializing, wait for that to complete
     if (this.initializing && this.initPromise) {
       return this.initPromise;
@@ -74,7 +82,7 @@ export class MemorySystem {
     }
 
     this.initializing = true;
-    this.initPromise = this._doInitialize(dbUri);
+    this.initPromise = this._doInitialize(dbUri, options);
 
     try {
       await this.initPromise;
@@ -88,7 +96,7 @@ export class MemorySystem {
   /**
    * Internal initialization logic
    */
-  private async _doInitialize(dbUri?: string): Promise<void> {
+  private async _doInitialize(dbUri?: string, _options?: InitializeOptions): Promise<void> {
     // If dbUri provided and different from current, create new database
     if (dbUri) {
       this.db = new MemoryDatabase(dbUri, this.projectId);
@@ -105,6 +113,13 @@ export class MemorySystem {
    */
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  /**
+   * Check if the memory system is ready (initialized and connected to Qdrant)
+   */
+  isReady(): boolean {
+    return this.initialized && this.db.isConnected();
   }
 
   /**

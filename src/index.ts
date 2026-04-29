@@ -32,11 +32,14 @@ async function main(): Promise<void> {
     const config = await loadConfig();
     server = new SuperMemoryServer(config);
     await server.start();
+    // Note: Server may start in degraded mode if memory initialization fails.
+    // Use get_status tool to check component health.
   } catch (error) {
     logger.error('Failed to start server', error);
     // Give the server a chance to log its initialization error
     await new Promise(resolve => setTimeout(resolve, 100));
-    process.exit(1);
+    // Don't exit with 1 - server may be running in degraded mode
+    // The MCP transport is established before memory init, so tools can respond
   }
 }
 

@@ -330,6 +330,9 @@ export class SuperMemoryServer {
         annotations: { readOnlyHint: true },
       },
       async ({ query, limit, strategy }: { query: string; limit: number; strategy: 'tiered' | 'vector_only' | 'text_only' }) => {
+        // Ensure memory is ready before operation
+        this.ensureMemoryReady();
+
         // Convert strategy to internal format
         const strategyMap: Record<string, SearchStrategy> = {
           'tiered': 'TIERED',
@@ -377,6 +380,9 @@ export class SuperMemoryServer {
         annotations: { destructiveHint: true },
       },
       async ({ content, sourceType, sourcePath, metadata }: { content: string; sourceType: 'manual' | 'file' | 'conversation' | 'web'; sourcePath?: string; metadata?: Record<string, unknown> }) => {
+        // Ensure memory is ready before operation
+        this.ensureMemoryReady();
+
         try {
           // Check for duplicate content
           const exists = await this.context.memory.contentExists(content);
@@ -756,11 +762,44 @@ export class SuperMemoryServer {
         }
       }
     );
+
+    // get_status tool - returns current server status
+    this.server.registerTool(
+      'get_status',
+      {
+        description: 'Get the current status of the Super-Memory server including memory, model, and indexer state.',
+        inputSchema: {},
+        annotations: { readOnlyHint: true },
+      },
+      async () => {
+        const memoryReady = this.context.memory.isReady();
+        let modelReady = false;
+        const indexerReady = this.context.indexer !== null;
+        try {
+          const modelManager = ModelManager.getInstance();
+          modelReady = modelManager.getMetadata().isLoaded;
+        } catch {
+          // Model manager not available
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              memoryReady,
+              modelReady,
+              indexerReady,
+              initError: this.initError?.message ?? null,
+            }),
+          }],
+        };
+      }
+    );
   }
 
   /**
    * Initialize the server and connect to transport
-   * Implements graceful degradation - server starts even if some components fail
+   * Implements graceful degradation - server starts even if memory Qdrant is unavailable
    */
   async start(): Promise<void> {
     if (this.initialized) {
@@ -768,16 +807,29 @@ export class SuperMemoryServer {
       return;
     }
 
+    // Create MCP transport early so we can connect even if memory init fails
+    const transport = new StdioServerTransport();
+
+    // Add transport error/close handlers that log but don't crash
+    // Note: StdioServerTransport extends EventEmitter but types may not reflect this
+    const transportWithHandlers = transport as StdioServerTransport & {
+      on(event: 'error' | 'close', handler: (err?: Error) => void): void;
+    };
+    transportWithHandlers.on('error', (error) => {
+      logger.error('MCP transport error', { error: error instanceof Error ? error.message : String(error) });
+    });
+    transportWithHandlers.on('close', () => {
+      logger.warn('MCP transport closed');
+    });
+
     try {
-      // Initialize memory system (critical - without this, nothing works)
-      try {
-        await this.context.memory.initialize(this.config.database.qdrantUrl || this.config.database.dbPath);
-        logger.info('Memory system initialized');
-      } catch (memError) {
-        this.initError = memError instanceof Error ? memError : new Error(String(memError));
-        logger.error('Failed to initialize memory system', { error: this.initError.message });
-        throw new Error(`Memory system initialization failed: ${this.initError.message}`);
-      }
+      // Connect MCP transport BEFORE memory initialization
+      // This allows the server to accept connections even if Qdrant is unavailable
+      await this.server.connect(transport);
+      logger.info('MCP transport connected');
+
+      // Initialize memory system with retry loop and exponential backoff
+      await this.initializeMemoryWithRetry();
 
       // Initialize model via ModelManager singleton (preload model)
       // Model loads eagerly at startup to prevent timeouts on first request
@@ -810,16 +862,56 @@ export class SuperMemoryServer {
         logger.warn('Project indexer initialization failed - search_project tool may not work', { error: indexerError instanceof Error ? indexerError.message : String(indexerError) });
       }
 
-      // Start MCP server with stdio transport
-      const transport = new StdioServerTransport();
-      await this.server.connect(transport);
       this.initialized = true;
-
       logger.info('Super-Memory MCP Server started successfully');
     } catch (error) {
       this.initError = error instanceof Error ? error : new Error(String(error));
       logger.error('Failed to initialize server', { error: this.initError.message });
-      throw this.initError;
+      // Don't throw - server is running in degraded mode
+      this.initialized = true;
+    }
+  }
+
+  /**
+   * Initialize memory system with retry loop and exponential backoff
+   */
+  private async initializeMemoryWithRetry(): Promise<void> {
+    const maxRetries = this.config.performance.qdrantMaxRetries ?? 3;
+    const baseDelayMs = this.config.performance.qdrantRetryDelayMs ?? 1000;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        await this.context.memory.initialize(this.config.database.qdrantUrl || this.config.database.dbPath);
+        logger.info('Memory system initialized');
+        return;
+      } catch (memError) {
+        lastError = memError instanceof Error ? memError : new Error(String(memError));
+        logger.error(`Memory system initialization attempt ${attempt + 1}/${maxRetries + 1} failed`, { error: lastError.message });
+
+        if (attempt < maxRetries) {
+          // Exponential backoff: 1s, 2s, 4s, etc.
+          const delayMs = baseDelayMs * Math.pow(2, attempt);
+          logger.info(`Retrying memory initialization in ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    // All retries exhausted - store error but don't throw
+    this.initError = lastError;
+    logger.error('Memory system initialization failed after all retries', { error: lastError?.message });
+  }
+
+  /**
+   * Ensure memory is ready before operations, throws structured MCP error if not
+   */
+  private ensureMemoryReady(): void {
+    if (!this.context.memory.isReady()) {
+      const error = new Error('Memory system not ready. Qdrant may be unavailable.');
+      (error as Error & { code?: string; initError?: string }).code = 'MEMORY_NOT_READY';
+      (error as Error & { code?: string; initError?: string }).initError = this.initError?.message;
+      throw error;
     }
   }
 
