@@ -4,7 +4,7 @@
 **Package**: `@veedubin/super-memory-ts`  
 **Repository**: https://github.com/Veedubin/Super-Memory-TS  
 **License**: MIT  
-**Current Version**: v2.2.2
+**Current Version**: v2.3.7
 
 ---
 
@@ -14,7 +14,7 @@ This project provides a local-first semantic memory system with project isolatio
 
 ---
 
-## Architecture (v2.2.2)
+## Architecture (v2.3.7)
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -138,6 +138,7 @@ export BOOMERANG_PROJECT_ID=my-project   # optional, for project isolation
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v2.3.7** | 2026-04-29 | Connection resilience: start when Qdrant down, retry logic, `get_status` tool |
 | **v2.2.2** | 2026-04-27 | Custom path indexing via `index_project` tool, tiered search documentation |
 | **v2.2.1** | 2026-04-26 | MCP connection fix, Qdrant filter bug fix |
 | **v2.2.0** | 2026-04-25 | Per-project memory isolation via `BOOMERANG_PROJECT_ID` |
@@ -147,3 +148,26 @@ export BOOMERANG_PROJECT_ID=my-project   # optional, for project isolation
 
 - **v2.0.0**: `uri` parameter replaced with Qdrant URL (e.g., `http://localhost:6333`)
 - **v2.0.0**: Global write queues removed (Qdrant handles concurrency natively)
+
+---
+
+## Downstream Dependencies
+
+### boomerang-v2
+- **Package**: `@veedubin/boomerang-v2` v3.1.0
+- **Usage**: Direct imports from `dist/memory/` and `dist/project-index/`
+- **Import pattern**: `import { ... } from '@veedubin/super-memory-ts/dist/memory/database.js'`
+- **Requirement**: Package must include `dist/` directory with all subdirectories
+
+### Export Structure
+
+The `files` field in package.json ensures all dist/ contents are published:
+```json
+"files": ["dist/", "bin/", "package.json", "README.md", "NPM_README.md", "LICENSE"]
+```
+
+This includes:
+- `dist/memory/*` — Memory system (database, index, schema, search)
+- `dist/project-index/*` — Project indexing (indexer, chunker, watcher, file-tracker)
+- `dist/server.*` — MCP server entry point
+- `dist/config.*` — Configuration utilities
