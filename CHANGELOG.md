@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.4.0] - 2026-05-01
+
+### Changed
+- **Lazy model loading by default**: Model now loads on first embedding request instead of at startup for faster npx/mCP client startup
+- `SUPER_MEMORY_EAGER_LOAD=1` environment variable enables opt-in eager loading
+
+### Added
+- **Postinstall script** (`scripts/postinstall.js`): Pre-downloads the BGE-Large embedding model (~650MB) during `npm install` so subsequent startups are faster
+- Model pre-download uses CPU by default to avoid GPU driver requirements during installation
+- CI skip logic: Set `SUPER_MEMORY_POSTINSTALL=1` to force model download in CI environments
+
+### Fixed
+- **npx timeout issue**: Deferred model loading prevents MCP client timeout when using `npx -y @veedubin/super-memory-ts`
+
+### Technical Details
+- `src/server.ts`: Model loading now conditional on `SUPER_MEMORY_EAGER_LOAD` env var
+- `scripts/postinstall.js`: New file that runs during `npm install` to pre-cache the model
+- `src/config.ts`: Added `SUPER_MEMORY_EAGER_LOAD` to `ENV_VARS` constant
+- `package.json`: Added `postinstall` script, bumped to v2.4.0, included `scripts/` in `files` array
+
 ## [2.3.6] - 2026-04-29
 
 ### Fixed

@@ -831,14 +831,24 @@ export class SuperMemoryServer {
       // Initialize memory system with retry loop and exponential backoff
       await this.initializeMemoryWithRetry();
 
-      // Initialize model via ModelManager singleton (preload model)
-      // Model loads eagerly at startup to prevent timeouts on first request
-      try {
-        const modelManager = ModelManager.getInstance();
-        await modelManager.acquire();
-        logger.info('Model manager initialized (model preloaded)');
-      } catch (modelError) {
-        logger.warn('Model manager initialization failed - embeddings will be generated on first request', { error: modelError instanceof Error ? modelError.message : String(modelError) });
+      // Initialize model: lazy by default, eager only if SUPER_MEMORY_EAGER_LOAD is set
+      const eagerLoad = process.env.SUPER_MEMORY_EAGER_LOAD === '1' || 
+                        process.env.SUPER_MEMORY_EAGER_LOAD === 'true';
+
+      if (eagerLoad) {
+        try {
+          const modelManager = ModelManager.getInstance();
+          logger.info('Preloading embedding model (SUPER_MEMORY_EAGER_LOAD is set)...');
+          const preloadStart = Date.now();
+          await modelManager.acquire();
+          logger.info(`Model preloaded successfully (${Date.now() - preloadStart}ms)`);
+        } catch (modelError) {
+          logger.warn('Model preload failed - will retry on first embedding request', { 
+            error: modelError instanceof Error ? modelError.message : String(modelError) 
+          });
+        }
+      } else {
+        logger.info('Model loading deferred to first embedding request (set SUPER_MEMORY_EAGER_LOAD=1 to preload at startup)');
       }
 
       // Initialize project indexer (non-critical)

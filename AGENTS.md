@@ -4,7 +4,7 @@
 **Package**: `@veedubin/super-memory-ts`  
 **Repository**: https://github.com/Veedubin/Super-Memory-TS  
 **License**: MIT  
-**Current Version**: v2.3.7
+**Current Version**: v2.4.0
 
 ---
 
@@ -14,7 +14,7 @@ This project provides a local-first semantic memory system with project isolatio
 
 ---
 
-## Architecture (v2.3.7)
+## Architecture (v2.4.0)
 
 | Component | Technology | Notes |
 |-----------|------------|-------|

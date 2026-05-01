@@ -1,4 +1,0 @@
-/**
- * Project index types
- */
-export {};
