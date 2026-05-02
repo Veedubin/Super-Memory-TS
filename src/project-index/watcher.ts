@@ -10,6 +10,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { join } from 'path';
 import { logger } from '../utils/logger.js';
 import type { FileEvent, WatcherConfig } from './types.js';
+import { loadGitignorePatterns } from './indexer.js';
 
 // Default watcher configuration
 const DEFAULT_CONFIG: Required<Pick<WatcherConfig, 'debounceMs' | 'ignoreHidden' | 'ignoreInitial'>> = {
@@ -20,6 +21,7 @@ const DEFAULT_CONFIG: Required<Pick<WatcherConfig, 'debounceMs' | 'ignoreHidden'
 
 // Patterns that are always excluded
 const ALWAYS_EXCLUDED = [
+  // Existing patterns
   '**/node_modules/**',
   '**/.git/**',
   '**/dist/**',
@@ -36,6 +38,46 @@ const ALWAYS_EXCLUDED = [
   '**/*.sock',
   // Skip files starting with . and common system files
   '**/.*',
+  // Python virtual environments and tooling
+  '**/.venv/**',
+  '**/venv/**',
+  '**/.tox/**',
+  '**/.pytest_cache/**',
+  '**/.mypy_cache/**',
+  '**/.nox/**',
+  '**/.hypothesis/**',
+  '**/.eggs/**',
+  '**/.egg-info/**',
+  '**/site-packages/**',
+  '**/vendor/**',
+  '**/bower_components/**',
+  // JS/TS frameworks and build outputs
+  '**/.next/**',
+  '**/.nuxt/**',
+  '**/out/**',
+  '**/.svelte-kit/**',
+  '**/.parcel-cache/**',
+  // Rust build outputs
+  '**/target/**',
+  // Java/Android/IDE
+  '**/.gradle/**',
+  '**/.idea/**',
+  '**/.vscode/**',
+  '**/.vs/**',
+  '**/bin/**',
+  '**/obj/**',
+  // Python compiled/generated
+  '**/__pycache__/**',
+  '**/*.pyc',
+  '**/*.pyo',
+  '**/*.pyd',
+  // Other compiled binaries
+  '**/*.so',
+  '**/*.dll',
+  '**/*.dylib',
+  '**/*.class',
+  '**/*.o',
+  '**/*.a',
 ];
 
 /**
@@ -53,14 +95,20 @@ export class ProjectWatcher extends EventEmitter {
   constructor(config: WatcherConfig) {
     super();
     this.setMaxListeners(50); // Allow many listeners for testing
-    
+
+    // Load .gitignore patterns from the first path (root)
+    const gitignorePatterns = config.paths.length > 0
+      ? loadGitignorePatterns(config.paths[0])
+      : [];
+
     // Merge config with defaults
     this.config = {
       paths: config.paths,
-      includePatterns: config.includePatterns.length > 0 
-        ? config.includePatterns 
+      includePatterns: config.includePatterns.length > 0
+        ? config.includePatterns
         : ['**/*'],
       excludePatterns: [
+        ...gitignorePatterns,
         ...ALWAYS_EXCLUDED,
         ...config.excludePatterns,
       ],

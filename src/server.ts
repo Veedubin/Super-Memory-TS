@@ -330,39 +330,51 @@ export class SuperMemoryServer {
         annotations: { readOnlyHint: true },
       },
       async ({ query, limit, strategy }: { query: string; limit: number; strategy: 'tiered' | 'vector_only' | 'text_only' }) => {
-        // Ensure memory is ready before operation
-        this.ensureMemoryReady();
+        try {
+          // Ensure memory is ready before operation
+          this.ensureMemoryReady();
 
-        // Convert strategy to internal format
-        const strategyMap: Record<string, SearchStrategy> = {
-          'tiered': 'TIERED',
-          'vector_only': 'VECTOR_ONLY',
-          'text_only': 'TEXT_ONLY',
-        };
-        const internalStrategy = strategyMap[strategy] || 'TIERED';
+          // Convert strategy to internal format
+          const strategyMap: Record<string, SearchStrategy> = {
+            'tiered': 'TIERED',
+            'vector_only': 'VECTOR_ONLY',
+            'text_only': 'TEXT_ONLY',
+          };
+          const internalStrategy = strategyMap[strategy] || 'TIERED';
 
-        const searchOpts: SearchOptions = {
-          topK: limit,
-          strategy: internalStrategy,
-        };
+          const searchOpts: SearchOptions = {
+            topK: limit,
+            strategy: internalStrategy,
+          };
 
-        // Wrap query operation with 30s timeout to prevent hanging
-        const results = await withTimeout(
-          this.context.memory.queryMemories(query, searchOpts),
-          30000,
-          'query_memories'
-        );
+          // Wrap query operation with 30s timeout to prevent hanging
+          const results = await withTimeout(
+            this.context.memory.queryMemories(query, searchOpts),
+            30000,
+            'query_memories'
+          );
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              count: results.length,
-              memories: results.map((r) => this.formatMemoryEntry(r)),
-              strategy_used: internalStrategy,
-            }),
-          }],
-        };
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                count: results.length,
+                memories: results.map((r) => this.formatMemoryEntry(r)),
+                strategy_used: internalStrategy,
+              }),
+            }],
+          };
+        } catch (err) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                error: err instanceof Error ? err.message : 'Memory system not ready',
+              }),
+            }],
+            isError: true,
+          };
+        }
       }
     );
 

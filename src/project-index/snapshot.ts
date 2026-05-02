@@ -2,6 +2,7 @@ import createXXHash64 from 'xxhash-wasm';
 import { promises as fs, statSync } from 'fs';
 import { resolve, relative } from 'path';
 import { glob } from 'glob';
+import { loadGitignorePatterns } from './indexer.js';
 
 interface SnapshotEntry {
   hash: string;        // xxhash64 hex
@@ -63,12 +64,38 @@ export class SnapshotIndex {
   }
   
   async scan(): Promise<FileDelta> {
+    // Load .gitignore patterns and combine with hardcoded patterns
+    const gitignorePatterns = loadGitignorePatterns(this.rootPath);
+
+    // Expanded hardcoded ignore patterns
+    const hardcodedIgnore = [
+      // Existing patterns
+      'node_modules/**', '.git/**', 'dist/**', '*.log', '.DS_Store',
+      '**/*.db', '**/*.har', '**/*.tmp', '**/*.log',
+      // Python virtual environments
+      '**/.venv/**', '**/venv/**', '**/.tox/**', '**/.pytest_cache/**',
+      '**/.mypy_cache/**', '**/.nox/**', '**/.hypothesis/**', '**/.eggs/**',
+      '**/.egg-info/**', '**/site-packages/**', '**/vendor/**', '**/bower_components/**',
+      // JS/TS build outputs
+      '**/.next/**', '**/.nuxt/**', '**/out/**', '**/.svelte-kit/**',
+      // Rust
+      '**/target/**',
+      // Java/Android/Gradle
+      '**/.gradle/**', '**/.idea/**', '**/.vscode/**', '**/.vs/**',
+      '**/bin/**', '**/obj/**',
+      // Other
+      '**/.cache/**', '**/coverage/**', '**/.parcel-cache/**',
+      '**/__pycache__/**', '**/*.pyc', '**/*.pyo', '**/*.pyd',
+      '**/.bash_history', '**/.Xauthority', '**/.ICEauthority',
+      '**/.viminfo', '**/.socket', '**/*.sock',
+    ];
+
     // Glob all files respecting exclude patterns
     const allFiles = await glob('**/*', {
       cwd: this.rootPath,
       absolute: true,
       nodir: true,
-      ignore: ['node_modules/**', '.git/**', 'dist/**', '*.log', '.DS_Store', '**/*.db', '**/*.har', '**/*.tmp']
+      ignore: [...hardcodedIgnore, ...gitignorePatterns]
     });
     
     const currentPaths = new Set<string>();

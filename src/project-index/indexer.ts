@@ -10,9 +10,10 @@
 
 import os from 'os';
 import { readFile, stat } from 'fs/promises';
+import { readFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
-import { extname, sep, resolve } from 'path';
+import { extname, sep, resolve, basename } from 'path';
 import { logger } from '../utils/logger.js';
 import { ProjectWatcher, createWatcher } from './watcher.js';
 import { FileChunker, createChunker } from './chunker.js';
@@ -31,9 +32,65 @@ import type {
   ProjectIndexerStats,
 } from './types.js';
 
-// File types and directories to skip during indexing
-const SKIP_EXTENSIONS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.sqlite', '.sqlite3']);
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.cache', '__pycache__']);
+// Expanded directories to skip during indexing
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.cache', '__pycache__',
+  // Python virtual environments and tooling
+  '.venv', 'venv', '.tox', '.pytest_cache', '.mypy_cache', '.nox', '.hypothesis',
+  '.eggs', '.egg-info', 'site-packages', 'vendor', 'bower_components',
+  // JS/TS frameworks and build outputs
+  '.next', '.nuxt', 'out', '.svelte-kit',
+  // Rust build outputs
+  'target',
+  // Java/Android
+  '.gradle', '.idea', '.vscode', '.vs', 'bin', 'obj',
+  // Other common
+  'coverage', '.parcel-cache',
+]);
+
+// Allowlist of extensions to index (source code + docs + config)
+// Everything NOT in this list is DENIED by default
+const ALLOWED_EXTENSIONS = new Set([
+  // Source code - TypeScript/JavaScript
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts',
+  // Source code - Python
+  '.py', '.pyw', '.pyi',
+  // Source code - Java/Kotlin
+  '.java', '.kt', '.kts',
+  // Source code - C#
+  '.cs', '.fs',
+  // Source code - C/C++
+  '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.hxx', '.h++',
+  // Source code - Go
+  '.go',
+  // Source code - Rust
+  '.rs',
+  // Source code - Ruby
+  '.rb', '.erb',
+  // Source code - PHP
+  '.php',
+  // Source code - Swift
+  '.swift',
+  // Source code - Vue/Svelte
+  '.vue', '.svelte',
+  // Source code - SQL
+  '.sql',
+  // Shell scripts
+  '.sh', '.bash', '.zsh', '.fish', '.ksh', '.ash',
+  // Config formats
+  '.yaml', '.yml', '.json', '.jsonc', '.json5', '.toml', '.ini', '.cfg', '.conf',
+  '.config', '.properties', '.env.example', '.editorconfig', '.gitignore',
+  '.gitattributes', '.dockerignore', '.prettierrc', '.eslintrc', '.eslintrc.json',
+  '.babelrc', '.jshintrc', '.pylintrc', '.flake8', '.editorconfig',
+  // Markup/Documentation (plain text docs only)
+  '.md', '.mdx', '.rst', '.txt', '.textile', '.org', '.adoc', '.asciidoc',
+  // Web
+  '.html', '.htm', '.css', '.scss', '.sass', '.less', '.xml',
+  // Data files
+  '.csv', '.tsv',
+  // Build/Project files (no binaries)
+  '.gradle', '.properties',
+]);
 
 // Memory management constants
 const MAX_FILE_SIZE_MB = 5; // Skip files larger than 5MB
@@ -44,16 +101,89 @@ const DEFAULT_FLUSH_INTERVAL_MS = 100;
 const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024; // 50MB
 
 /**
- * Check if a file should be skipped based on extension or directory
+ * Check if a file should be indexed based on allowlist approach.
+ * Returns true if the file SHOULD be indexed, false if it should be skipped.
  */
-function shouldSkipFile(filePath: string): boolean {
-  const fileExt = extname(filePath).toLowerCase();
-  if (SKIP_EXTENSIONS.has(fileExt)) return true;
-
+function shouldIndexFile(filePath: string): boolean {
+  // Check directory first (faster)
   const parts = filePath.split(sep);
-  if (parts.some(p => SKIP_DIRS.has(p))) return true;
+  if (parts.some(p => SKIP_DIRS.has(p))) return false;
 
-  return false;
+  // Check extension against allowlist (deny everything else)
+  const fileExt = extname(filePath).toLowerCase();
+  if (fileExt && !ALLOWED_EXTENSIONS.has(fileExt)) return false;
+
+  // No extension - allow files named exactly like .gitignore, Makefile, etc.
+  if (!fileExt) {
+    const baseName = basename(filePath);
+    const allowedNames = new Set([
+      'Makefile', 'makefile', 'Dockerfile', 'Gemfile', 'Rakefile', 'Procfile',
+      '.gitignore', '.gitattributes', '.dockerignore', '.editorconfig',
+      'CMakeLists.txt', 'Makefile', 'Vagrantfile',
+    ]);
+    if (!allowedNames.has(baseName)) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Load and parse .gitignore patterns from a directory.
+ * Returns glob patterns suitable for exclusion.
+ */
+export function loadGitignorePatterns(rootPath: string): string[] {
+  const gitignorePath = resolve(rootPath, '.gitignore');
+  const patterns: string[] = [];
+
+  try {
+    const content = readFileSync(gitignorePath, 'utf-8');
+    const lines = content.split('\n');
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Skip empty lines and comments
+      if (!trimmed || trimmed.startsWith('#')) continue;
+
+      // Handle negations (when we want to exclude a negation, treat as skip)
+      // But for simplicity, we'll just add the pattern as-is for exclusion
+      let pattern = trimmed;
+
+      // Handle negation prefix
+      const isNegated = pattern.startsWith('!');
+      if (isNegated) {
+        pattern = pattern.slice(1);
+      }
+
+      // Skip anchored patterns (they're project-specific)
+      if (pattern.startsWith('/') && !pattern.startsWith('/')) continue;
+
+      // Skip trailing slashes (directories) - we'll handle directory matching via SKIP_DIRS
+      if (pattern.endsWith('/')) continue;
+
+      // Convert .gitignore patterns to glob patterns
+      // **/node_modules -> **/node_modules/**
+      if (!pattern.includes('**')) {
+        if (pattern.startsWith('*.')) {
+          // *.log -> **/*.log
+          pattern = '**/' + pattern;
+        } else if (!pattern.includes('/')) {
+          // node_modules -> **/node_modules/**
+          pattern = '**/' + pattern + '/**';
+        }
+        // else: path/pattern -> path/pattern (relative to root)
+      }
+
+      // Skip negations for now (would need track negation state)
+      if (!isNegated) {
+        patterns.push(pattern);
+      }
+    }
+  } catch {
+    // .gitignore doesn't exist or can't be read - proceed with hardcoded patterns
+  }
+
+  return patterns;
 }
 
 /**
@@ -242,9 +372,9 @@ export class ProjectIndexer extends EventEmitter {
 
     // Handle file events
     this.watcher!.on('file', (event: FileEvent) => {
-      // Skip files that shouldn't be indexed
-      if (shouldSkipFile(event.path)) {
-        logger.debug(`Skipping file due to extension/directory filter: ${event.path}`);
+      // Skip files that shouldn't be indexed (allowlist approach)
+      if (!shouldIndexFile(event.path)) {
+        logger.debug(`Skipping file (not in allowlist): ${event.path}`);
         return;
       }
       logger.debug(`Indexer received file event: ${event.type} ${event.path}`);
@@ -431,11 +561,8 @@ export class ProjectIndexer extends EventEmitter {
    * Process a file - read, hash, chunk, embed, and store
    */
   async processFile(filePath: string, precomputedHash?: string): Promise<void> {
-    // Skip bad files at processFile level as safeguard
-    const SKIP_EXTS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.tmp']);
-    const SKIP_DIRS = ['node_modules', '.git', 'dist', 'build'];
-    if (SKIP_EXTS.has(extname(filePath).toLowerCase())) return;
-    if (SKIP_DIRS.some(d => filePath.includes(d))) return;
+    // Skip files not in the allowlist at processFile level as safeguard
+    if (!shouldIndexFile(filePath)) return;
 
     logger.debug(`processFile called: ${filePath}`);
     try {

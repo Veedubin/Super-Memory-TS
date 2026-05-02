@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.4.3] - 2026-05-01
+
+### Fixed
+- **Critical crash loop fix**: `query_memories` tool handler now properly catches exceptions when the memory system is not ready, preventing unhandled promise rejections that caused `process.exit(1)` and rapid MCP server restarts
+
+### Changed
+- **Project indexer filtering overhaul**: Replaced deny-list with allowlist-based file filtering (`ALLOWED_EXTENSIONS`) to prevent scanning irrelevant directories (`.venv`, `node_modules`, `.tox`, etc.)
+- Added `.gitignore` pattern support to snapshot and watcher for better exclusion behavior
+
 ## [2.4.2] - 2026-05-01
 
 ### Changed
